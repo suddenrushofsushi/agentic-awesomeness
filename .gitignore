@@ -1,0 +1,7 @@
+bots/keys/
+bots/logs/
+bots/pids/
+bots/PUBKEYS.txt
+buzz/
+hermes/*.log
+/.claude/

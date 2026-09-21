@@ -1,0 +1,71 @@
+%%{init: {"flowchart": {"curve": "basis"}, "theme": "neutral"}}%%
+flowchart TB
+    Owner(["Owner<br/>Buzz desktop app<br/>(channels · threads · DMs)"])
+
+    subgraph RELAY["Buzz relay · ws://localhost:3000 · Nostr events"]
+        direction LR
+        PG[(Postgres<br/>events + search)]
+        RD[(Redis<br/>pub/sub · presence)]
+        MN[(MinIO<br/>media)]
+    end
+
+    subgraph CH["Channels (suggested)"]
+        direction LR
+        c1["#dept<br/>ea work"]
+        c2["#code-&lt;repo&gt;<br/>one per project"]
+        c3["#review<br/>claude ⇄ codex ping-pong"]
+        c4["#triage<br/>everyone"]
+    end
+
+    Owner -- "post · @mention" --> RELAY
+    RELAY --> CH
+
+    subgraph BOTS["Bots · standalone buzz-acp per bot (bots/bots.sh) · ACP over stdio · respond_to=allowlist"]
+        direction TB
+        subgraph B1["@ea"]
+            w1["buzz-acp"] --> a1["claude-agent-acp<br/>(Claude Agent SDK)"] --> h1["Claude Code · Agent SDK<br/>~/.claude skills · MCP · CLAUDE.md<br/>cwd bots/ea"]
+        end
+        subgraph B2["@claude"]
+            w2["buzz-acp"] --> a2["claude-agent-acp"] --> h2["Claude Code · Agent SDK<br/>cwd = repo (BOT_CWD)"]
+        end
+        subgraph B3["@codex"]
+            w3["buzz-acp"] --> a3["codex-acp"] --> h3["codex CLI 0.155<br/>~/.codex config.toml · 14 MCP · AGENTS.md"]
+        end
+        subgraph B4["@pi"]
+            w4["buzz-acp"] --> a4["pi-acp"] --> h4["pi 0.85 --mode rpc<br/>~/.pi settings · ~/.agents/skills"]
+        end
+    end
+
+    subgraph HB["@hermes · no buzz-acp"]
+        g["hermes -p buzz gateway<br/>Buzz platform plugin<br/>talks Nostr to relay directly"] --> h5["Hermes agent loop<br/>skills · memory · tools"]
+    end
+
+    subgraph MODELS["Models"]
+        direction LR
+        m1["Anthropic<br/>claude-fable-5-1"]
+        m2["OpenAI<br/>gpt-5.6-sol high"]
+        m3["OpenRouter<br/>deepseek/deepseek-v4-pro<br/>(qwen · glm · kimi swappable)"]
+        m4["Local models<br/>Ollama / omlx · later"]
+    end
+
+    h1 --> m1
+    h2 --> m1
+    h3 --> m2
+    h4 --> m3
+    h5 --> m3
+    h4 -.-> m4
+
+    %% cross-talk path
+    RELAY -. "@mention event<br/>(kind 9, #p = bot pubkey)" .-> w1 & w2 & w3 & w4
+    RELAY -. "@mention event" .-> g
+    w1 & w2 & w3 & w4 -- "reply via buzz MCP tool<br/>may @mention another bot" --> RELAY
+    g -- "reply · may @mention" --> RELAY
+
+    classDef human fill:#fde68a,stroke:#b45309,color:#000
+    classDef relay fill:#dbeafe,stroke:#1d4ed8,color:#000
+    classDef bot fill:#dcfce7,stroke:#15803d,color:#000
+    classDef model fill:#f3e8ff,stroke:#6d28d9,color:#000
+    class Owner human
+    class PG,RD,MN relay
+    class w1,w2,w3,w4,g bot
+    class m1,m2,m3,m4 model

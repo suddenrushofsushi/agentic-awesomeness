@@ -7,11 +7,12 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; BIN="${BUZZ_DIR:-$HOME/git
 LABEL=com.agentic.ea-schedule; PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 case "${1:-}" in
   install)
-    CH="${2:?channel uuid}"; MODEL="${3:-opus}"; EA_PK=$(awk -F= '/^PK=/{print $2}' "$HERE/keys/ea.key"); EA_SK=$(awk -F= '/^SK=/{print $2}' "$HERE/keys/ea.key")
-    # the post is sent AS the ea identity so no other key is needed; buzz-acp ignores self-authored events unless mentioned, and a self-mention is fine.
+    CH="${2:?channel uuid}"; MODEL="${3:-opus}"; EA_PK=$(awk -F= '/^PK=/{print $2}' "$HERE/keys/ea.key")
+    [[ -f "$HERE/keys/scheduler.key" ]] || "$HERE/bots.sh" keygen scheduler   # posts must NOT come from ea's own key: buzz-acp ignores self-authored events
+    SCHED_SK=$(awk -F= '/^SK=/{print $2}' "$HERE/keys/scheduler.key")
     cat >"$HERE/.build/ea-schedule.sh" <<EOS
 #!/usr/bin/env bash
-export BUZZ_RELAY_URL=http://localhost:3000 BUZZ_PRIVATE_KEY=$EA_SK
+export BUZZ_RELAY_URL=http://localhost:3000 BUZZ_PRIVATE_KEY=$SCHED_SK
 exec "$BIN/buzz" messages send --channel "$CH" --mention "$EA_PK" --content "@ea use $MODEL: /ea"
 EOS
     chmod 700 "$HERE/.build/ea-schedule.sh"

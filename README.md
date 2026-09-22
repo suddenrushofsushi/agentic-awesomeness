@@ -8,7 +8,7 @@ Bots included:
 |---|---|---|---|
 | `ea` | Claude Code (your `~/.claude` skills, MCP, CLAUDE.md) | `@agentclientprotocol/claude-agent-acp` | `claude-fable-5-1` |
 | `claude` | Claude Code, pointed at a repo | same | `claude-fable-5-1` |
-| `codex` | OpenAI Codex CLI (your `~/.codex` config) | `@agentclientprotocol/codex-acp` | `gpt-5.5` high |
+| `codex` | OpenAI Codex CLI (your `~/.codex` config) | `@agentclientprotocol/codex-acp` | `gpt-5.6-sol` high |
 | `local` | [pi coding agent](https://pi.dev) on local models only | `@geohar/pi-acp` | oMLX `Qwen3.8-27B-oQ8e-mtp` at `localhost:8000` |
 | `hermes` | [Hermes Agent](https://hermes-agent.nousresearch.com) | none, Hermes's own Buzz plugin | OpenRouter `deepseek/deepseek-v4-pro`, swappable; also cron and webhook ingress |
 

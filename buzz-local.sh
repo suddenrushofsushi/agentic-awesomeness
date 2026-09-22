@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Buzz local stack without just/hermit. Usage: ./buzz-local.sh {services|relay|desktop|status|stop|stop-all}
 set -euo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/buzz" && pwd)"
+ROOT="${BUZZ_DIR:-$HOME/github/buzz}"
 RUN="$ROOT/.local-run"; mkdir -p "$RUN"
 VITE_PORT=17371   # any free port; keep stable so Tauri's dev config (and cargo cache) stays stable
 TARGET=$(rustc -vV | sed -n 's|host: ||p')

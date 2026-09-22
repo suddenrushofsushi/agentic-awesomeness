@@ -5,3 +5,4 @@ bots/PUBKEYS.txt
 buzz/
 hermes/*.log
 /.claude/
+bots/.build/

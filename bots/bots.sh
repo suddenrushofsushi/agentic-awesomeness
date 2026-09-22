@@ -3,7 +3,7 @@
 # Usage: bots/bots.sh {keygen|start|stop|restart|status|logs} <name>|all
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; ROOT="$(dirname "$HERE")"
-BIN="$ROOT/buzz/target/debug"; RELAY="${BUZZ_RELAY_URL:-ws://localhost:3000}"
+BIN="${BUZZ_DIR:-$HOME/github/buzz}/target/debug"; RELAY="${BUZZ_ACP_RELAY_URL:-ws://localhost:3000}"   # buzz-acp needs ws://; the buzz CLI wants http://, so keep the vars apart
 OWNER="${BUZZ_OWNER_PUBKEY:-$(awk '$1=="owner"{print $2}' "$HERE/PUBKEYS.txt" 2>/dev/null || true)}"
 [[ -n "$OWNER" ]] || { echo "owner pubkey unknown: set BUZZ_OWNER_PUBKEY or fix bots/PUBKEYS.txt" >&2; exit 1; }
 
@@ -13,7 +13,7 @@ sk() { awk -F= '/^SK=/{print $2}' "$HERE/keys/$1.key"; }
 
 keygen() { for n in $(names "$1"); do
   [[ -f "$HERE/keys/$n.key" ]] && { echo "$n: key exists, pubkey $(pk "$n")"; continue; }
-  out=$(cd "$ROOT/buzz" && set -a && . ./.env && set +a && "$BIN/buzz-admin" generate-key)
+  out=$(cd "$(dirname "$BIN")/.." && set -a && . ./.env && set +a && "$BIN/buzz-admin" generate-key)
   { echo "PK=$(awk '/Public key/{print $3}' <<<"$out")"; echo "SK=$(awk '/Secret key/{print $3}' <<<"$out")"; } >"$HERE/keys/$n.key"
   chmod 600 "$HERE/keys/$n.key"; echo "$n $(pk "$n")" >>"$HERE/PUBKEYS.txt"; echo "$n: pubkey $(pk "$n")"; done; }
 
@@ -23,10 +23,11 @@ start() { for n in $(names "$1"); do
   BOT_ALLOW=""; BOT_CWD="$HOME"; BOT_ARGS=""
   . "$HERE/$n.env"
   allow="$OWNER"; for a in $BOT_ALLOW; do allow="$allow,$(pk "$a")"; done
+  mkdir -p "$HERE/.build"; cat "$HERE/prompts/_common.md" "$HERE/prompts/$n.md" >"$HERE/.build/$n.md"
   ( cd "$BOT_CWD" && BUZZ_PRIVATE_KEY="$(sk "$n")" BUZZ_RELAY_URL="$RELAY" \
     nohup "$BIN/buzz-acp" --agent-owner "$OWNER" --respond-to allowlist --respond-to-allowlist "$allow" \
       --agent-command "$BOT_CMD" --agent-args "$BOT_ARGS" --mcp-command "$BIN/buzz-dev-mcp" \
-      --system-prompt-file "$HERE/prompts/$n.md" --session-policy thread \
+      --system-prompt-file "$HERE/.build/$n.md" --session-policy thread \
       >"$HERE/logs/$n.log" 2>&1 & echo $! >"$HERE/pids/$n.pid" )
   echo "$n: started pid $(cat "$HERE/pids/$n.pid") cwd $BOT_CWD pubkey $(pk "$n")"; done; }
 

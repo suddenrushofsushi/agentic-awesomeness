@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "defaultMode": "bypassPermissions",
+    "deny": [
+      "mcp__google_workspace",
+      "mcp__snowflake"
+    ]
+  }
+}

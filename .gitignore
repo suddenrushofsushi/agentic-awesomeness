@@ -6,3 +6,4 @@ buzz/
 hermes/*.log
 /.claude/
 bots/.build/
+bots/*.settings.json.bak

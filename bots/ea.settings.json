@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "defaultMode": "bypassPermissions",
+    "deny": [
+      "mcp__postgres",
+      "mcp__snowflake",
+      "mcp__aws",
+      "mcp__grafana",
+      "mcp__coolify",
+      "mcp__playwright"
+    ]
+  }
+}

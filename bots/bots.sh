@@ -23,6 +23,8 @@ start() { for n in $(names "$1"); do
   BOT_ALLOW=""; BOT_CWD="$HOME"; BOT_ARGS=""
   . "$HERE/$n.env"
   allow="$OWNER"; for a in $BOT_ALLOW; do allow="$allow,$(pk "$a")"; done
+  if [[ "$BOT_CMD" == *claude-agent-acp* ]]; then mkdir -p "$BOT_CWD/.claude"; tpl="$HERE/$n.settings.json"; [[ -f "$tpl" ]] || tpl="$HERE/claude.settings.json"
+    [[ -f "$BOT_CWD/.claude/settings.local.json" ]] || { cp "$tpl" "$BOT_CWD/.claude/settings.local.json"; echo "$n: wrote $BOT_CWD/.claude/settings.local.json from $(basename "$tpl")"; }; fi
   mkdir -p "$HERE/.build"; cat "$HERE/prompts/_common.md" "$HERE/prompts/$n.md" >"$HERE/.build/$n.md"
   ( exec >"$HERE/logs/$n.log" 2>&1 </dev/null   # detach the whole launcher from the caller's pipes, or `bots.sh start | tail` never returns
     cd "$BOT_CWD" && BUZZ_PRIVATE_KEY="$(sk "$n")" BUZZ_RELAY_URL="$RELAY" \

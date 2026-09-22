@@ -112,7 +112,7 @@ Or add them by name in the desktop. Same result.
 
 ### Per-harness notes
 
-**Claude bots.** `claude-agent-acp` uses the Claude Agent SDK, not your `claude` binary, but it loads `~/.claude` settings, skills, MCP servers, and plugins. Repo-level `CLAUDE.md` and `.claude/` load from `BOT_CWD`. Unattended mode needs `{"permissions":{"defaultMode":"bypassPermissions"}}` in `<BOT_CWD>/.claude/settings.json` or `settings.local.json`. `bots/ea/.claude/settings.json` ships that for the `ea` bot. Model via `ANTHROPIC_MODEL`.
+**Claude bots.** `claude-agent-acp` uses the Claude Agent SDK, not your `claude` binary, but it loads `~/.claude` settings, skills, MCP servers, and plugins. `bots.sh` seeds `<BOT_CWD>/.claude/settings.local.json` from `bots/<name>.settings.json` (falls back to `bots/claude.settings.json`) with bypass mode and that bot's MCP `permissions.deny` list. Keep Claude bot cwds outside each other and outside any repo whose `.claude/settings*` you do not intend to inherit: Claude Code applies a repo root's settings to every subdirectory. That is how `ea` briefly lost Google Workspace. Model via `ANTHROPIC_MODEL`.
 
 **Codex bot.** `CODEX_PATH` must be the real binary. If `/usr/local/bin/codex` is a symlink into the ChatGPT app, Codex looks for `codex-code-mode-host` beside the symlink, does not find it, and shell commands fail closed. Either point `CODEX_PATH` at `/Applications/ChatGPT.app/Contents/Resources/codex` (what `bots/codex.env` does) or `sudo ln -s /Applications/ChatGPT.app/Contents/Resources/codex-code-mode-host /usr/local/bin/`. Mode `INITIAL_AGENT_MODE=agent-full-access`. Model via `CODEX_CONFIG` JSON. Every turn loads all MCP servers from `~/.codex/config.toml`.
 
@@ -127,8 +127,10 @@ Or add them by name in the desktop. Same result.
 
 ## Scheduled and event-driven runs
 
-- Scheduled: a launchd or cron job posts a mention. `printf '@ea /ea' | buzz messages send --channel <uuid> --content - --mention <ea pubkey>`. No heartbeat needed.
-- Events: `hermes -p buzz webhook subscribe <name> --deliver buzz --no-agent` gives an HMAC-checked `POST /webhooks/<name>` that lands as a channel message without a model turn. Put cloudflared in front. Text containing `@bot` wakes that bot.
+- **Schedule.** `bots/schedule-ea.sh install <channel-uuid> [model]` writes a launchd job that posts `@ea use <model>: /ea` into the channel at 06, 09, 12, 15, 18 on weekdays and 12:00 on Saturday and Sunday. Default model `opus`. `bots/schedule-ea.sh remove` undoes it. No heartbeat needed.
+- **Webhooks.** The Hermes gateway runs an HTTP listener on `:8644` (`WEBHOOK_ENABLED=true` in the profile `.env`, `gateway.platforms.webhook.enabled: true` in its `config.yaml`). Routes live under `gateway.platforms.webhook.extra.routes.<name>` with `deliver: buzz`, `deliver_only: true`, `prompt: "{text}"`, `deliver_extra.chat_id: <channel uuid>`. A signed `POST /webhooks/<name>` with body `{"text": "..."}` lands in that channel with no model turn. Signature: `X-Hub-Signature-256: sha256=<hmac-sha256 of body>`. Unsigned is 401. The `hermes webhook subscribe` CLI ignores `-p <profile>`; write routes into the profile config instead. Note: `webhook subscribe` also refuses until `gateway.platforms.webhook.enabled` is set in config.yaml, not just `.env`.
+- **Tunnel.** `cloudflared` named tunnel (`~/.cloudflared/config.yml`) exposes only `^/webhooks/` on one hostname to `localhost:8644`; everything else is 404. Runs as user LaunchAgent `com.agentic.cloudflared-buzz`. One CNAME in the zone, nothing else touched.
+- **Helper.** `tools/buzz-post.sh <route> "text"` signs and posts. Set `BUZZ_WEBHOOK_URL=https://<host>` to go through the tunnel.
 
 ## Model override in chat
 
@@ -141,6 +143,20 @@ model=deepseek/deepseek-v4-pro fix the failing test
 ```
 
 The directive is stripped from the text and applied to that thread's session with `session/set_config_option {configId: "model"}`. Works for Claude, Codex, and pi adapters. Failures log a warning and keep the previous model. Verified: `@claude use sonnet:` answered as `claude-sonnet-5`.
+
+## MCP per bot
+
+Claude bots: `permissions.deny` in the seeded settings (`mcp__<server>` denies a whole server). Codex: `mcp_servers.<name>.enabled=false` inside `CODEX_CONFIG` in `bots/codex.env`. pi and Hermes: only what is declared for them.
+
+| bot | keeps | denied |
+|---|---|---|
+| `ea` | obsidian, google_workspace, atlassian, outline, evaluate | postgres, snowflake, aws, grafana, coolify, playwright |
+| `claude` | obsidian, atlassian, outline, postgres, grafana, aws, coolify, playwright, evaluate | google_workspace, snowflake |
+| `codex` | obsidian, atlassian, outline, postgres, grafana, aws, playwright, node_repl, evaluate | google_workspace, snowflake, computer-use |
+| `local` | obsidian, evaluate | everything else |
+| `hermes` | obsidian, evaluate | everything else |
+
+Verified by asking the bot to call a denied tool: the tool is absent from its context. Self-reported "list your MCP servers" answers are unreliable; test with a call.
 
 ## Cross-talk and guard rails
 

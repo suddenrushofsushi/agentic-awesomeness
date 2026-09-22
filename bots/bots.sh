@@ -24,11 +24,12 @@ start() { for n in $(names "$1"); do
   . "$HERE/$n.env"
   allow="$OWNER"; for a in $BOT_ALLOW; do allow="$allow,$(pk "$a")"; done
   mkdir -p "$HERE/.build"; cat "$HERE/prompts/_common.md" "$HERE/prompts/$n.md" >"$HERE/.build/$n.md"
-  ( cd "$BOT_CWD" && BUZZ_PRIVATE_KEY="$(sk "$n")" BUZZ_RELAY_URL="$RELAY" \
+  ( exec >"$HERE/logs/$n.log" 2>&1 </dev/null   # detach the whole launcher from the caller's pipes, or `bots.sh start | tail` never returns
+    cd "$BOT_CWD" && BUZZ_PRIVATE_KEY="$(sk "$n")" BUZZ_RELAY_URL="$RELAY" \
     nohup "$BIN/buzz-acp" --agent-owner "$OWNER" --respond-to allowlist --respond-to-allowlist "$allow" \
       --agent-command "$BOT_CMD" --agent-args "$BOT_ARGS" --mcp-command "$BIN/buzz-dev-mcp" \
       --system-prompt-file "$HERE/.build/$n.md" --session-policy thread \
-      >"$HERE/logs/$n.log" 2>&1 </dev/null & echo $! >"$HERE/pids/$n.pid" )
+      & echo $! >"$HERE/pids/$n.pid" )
   echo "$n: started pid $(cat "$HERE/pids/$n.pid") cwd $BOT_CWD pubkey $(pk "$n")"; done; }
 
 stop() { for n in $(names "$1"); do

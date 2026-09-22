@@ -130,6 +130,18 @@ Or add them by name in the desktop. Same result.
 - Scheduled: a launchd or cron job posts a mention. `printf '@ea /ea' | buzz messages send --channel <uuid> --content - --mention <ea pubkey>`. No heartbeat needed.
 - Events: `hermes -p buzz webhook subscribe <name> --deliver buzz --no-agent` gives an HMAC-checked `POST /webhooks/<name>` that lands as a channel message without a model turn. Put cloudflared in front. Text containing `@bot` wakes that bot.
 
+## Model override in chat
+
+Our fork's `buzz-acp` (branch `agentic`, commit f3d0871) reads a directive off the first message of a session, or any later message in it:
+
+```
+@codex use gpt-6-astra: design the schema
+@claude use opus: review it when codex posts
+model=deepseek/deepseek-v4-pro fix the failing test
+```
+
+The directive is stripped from the text and applied to that thread's session with `session/set_config_option {configId: "model"}`. Works for Claude, Codex, and pi adapters. Failures log a warning and keep the previous model. Verified: `@claude use sonnet:` answered as `claude-sonnet-5`.
+
 ## Cross-talk and guard rails
 
 - `bots.sh` starts every bot with `--respond-to allowlist`: the owner plus `BOT_ALLOW`. A bot never hears anyone else.
@@ -176,6 +188,5 @@ node tools/acp-smoke.mjs --cwd . --prompt "say hi" -- /opt/homebrew/bin/codex-ac
 
 - Dollar caps. `buzz-acp` does not pass `maxBudgetUsd` / `maxTurns` ACP metadata to `claude-agent-acp`. Patch candidate.
 - Trim the MCP servers Codex inherits per turn via `CODEX_CONFIG`.
-- Thread-scoped `use <model>:` directive: patch in progress on the `agentic` branch of the fork.
 - Per-message model routing for Hermes.
 - The desktop's built-in starter agents cannot be hidden ([#7750](https://github.com/block/buzz/issues/7750)). Ignore them.

@@ -28,7 +28,7 @@ start() { for n in $(names "$1"); do
     nohup "$BIN/buzz-acp" --agent-owner "$OWNER" --respond-to allowlist --respond-to-allowlist "$allow" \
       --agent-command "$BOT_CMD" --agent-args "$BOT_ARGS" --mcp-command "$BIN/buzz-dev-mcp" \
       --system-prompt-file "$HERE/.build/$n.md" --session-policy thread \
-      >"$HERE/logs/$n.log" 2>&1 & echo $! >"$HERE/pids/$n.pid" )
+      >"$HERE/logs/$n.log" 2>&1 </dev/null & echo $! >"$HERE/pids/$n.pid" )
   echo "$n: started pid $(cat "$HERE/pids/$n.pid") cwd $BOT_CWD pubkey $(pk "$n")"; done; }
 
 stop() { for n in $(names "$1"); do

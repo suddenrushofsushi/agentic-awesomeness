@@ -51,6 +51,10 @@ gate "$T" "git push";                          [ $? = 2 ] && ok "review with P1 
 printf '#!/bin/sh\necho "- [P2] fake minor finding"\n' > "$FAKE"
 CODEX_BIN="$FAKE" "$AGENT" review -C "$T" --base main >/dev/null 2>&1
 gate "$T" "git push";                          [ $? = 0 ] && ok "review with only P2 stamps"       || bad "review with only P2 stamps"
+printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "$0.args"\necho ok\n' > "$FAKE"
+CODEX_BIN="$FAKE" "$AGENT" review -C "$T" --base main "extra check" >/dev/null 2>&1
+! grep -qx -- '--base' "$FAKE.args" && grep -q 'main...HEAD' "$FAKE.args" && grep -q 'ponytail-review' "$FAKE.args" && grep -q 'extra check' "$FAKE.args" \
+  && ok "review puts base, lens, and extra prompt in one prompt (no --base flag)" || bad "review prompt form: $(tr '\n' ' ' < "$FAKE.args" | cut -c1-200)"
 git -C "$T" checkout -q main
 
 if [ "${1:-}" != "--offline" ]; then

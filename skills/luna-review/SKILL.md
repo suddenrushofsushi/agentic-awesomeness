@@ -14,7 +14,7 @@ The push gate (`hooks/push-gate.py` in agentic-awesomeness) blocks Claude's `git
 
 ## Steps
 1. **Commit first.** All work is committed locally and the working tree is clean. Review against the branch the PR will target: `--base origin/<pr-base>` (cpw's base map, if you use cpw). Without `--base`, the base is `origin/<default branch>`.
-2. **Review.** `agent review -C <repo>`. Run it in the background when the diff is large. The output is Luna's findings, tagged [P0] to [P3].
+2. **Review.** `agent review -C <repo>`. Run it in the background when the diff is large. The output is Luna's findings, tagged [P0] to [P3]. Every review also applies the ponytail-review lens: over-engineering comes back as [P3].
 3. **Triage each finding.**
    - Agree: fix it in a new commit.
    - Disagree: write a one-line reason. Claude decides P2 and P3. Claude never rejects a P0 or P1 alone: hold it for Craig.

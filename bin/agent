@@ -10,7 +10,8 @@
 
 Read-only unless --write. Prints only the final answer on stdout; one summary line
 on stderr. Every run is saved under ~/.agent-runs/<time>-<pid>-<agent>-<model>/.
-A review stamps HEAD only when it finishes with no [P0]/[P1] finding.
+A review stamps HEAD only when it finishes with no [P0]/[P1] finding. Every review also applies the
+ponytail-review lens (over-engineering as [P3], which never blocks).
 """
 import argparse, datetime, json, os, re, subprocess, sys, time
 from pathlib import Path
@@ -25,6 +26,10 @@ RULES = """You are a delegated worker. Claude Code owns this task and reviews yo
 - Never run git commit, push, branch, checkout, switch, reset, rebase, stash, merge, or worktree.
 - End with a short report: what you changed (files), what you ran to verify it, what is still open."""
 READ_ONLY = "Read-only task: do not create, change, or delete files."
+REVIEW_LENS = """Tag every correctness finding [P0] to [P3].
+Also apply the ponytail-review skill: flag over-engineering (speculative abstractions, one-implementation
+interfaces, factories for one product, reinvented stdlib, unneeded dependencies) as [P3] findings.
+Do not read or run Bugbot or any other review skill; you are the reviewer."""
 WRITE = "You may change files inside that folder. Leave every change uncommitted."
 
 
@@ -156,11 +161,12 @@ def review(a, prompt):
     base = None if a.uncommitted else (a.base or default_base(a.cwd))
     if not a.uncommitted and not base:
         sys.exit("[agent] no base branch found; pass --base")
-    cmd = [CODEX, "review", "-c", f'model="{model}"', "-c", f'model_reasoning_effort="{effort}"']
-    cmd += ["--uncommitted"] if a.uncommitted else ["--base", base]
-    if prompt:
-        cmd.append(prompt)
-    run_dir = new_run("review", model, prompt)
+    # codex review rejects --base/--uncommitted together with a prompt, so the target goes in the prompt
+    target = ("Review the uncommitted changes in this repo (staged, unstaged, and untracked)." if a.uncommitted
+              else f"Review the changes on the current branch against {base} (git diff {base}...HEAD).")
+    task = f"{target}\n{REVIEW_LENS}" + (f"\n\nAdditional instructions:\n{prompt}" if prompt else "")
+    cmd = [CODEX, "review", "-c", f'model="{model}"', "-c", f'model_reasoning_effort="{effort}"', task]
+    run_dir = new_run("review", model, task)
     rc, secs = execute(cmd, a.cwd, run_dir, stdout_name="review.md")
     text = (run_dir / "review.md").read_text()
     meta = dict(agent="review", model=model, effort=effort, cwd=a.cwd, base=base, head=head, rc=rc, seconds=secs)

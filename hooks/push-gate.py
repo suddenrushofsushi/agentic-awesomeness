@@ -18,22 +18,63 @@ def git(cwd, *args):
     return p.stdout.strip() if p.returncode == 0 else None
 
 
-def pushes(command, cwd):
-    """Yield (repo_dir, push_args, env_assignments) for each `git push` in a shell command line."""
-    for segment in re.split(r"&&|\|\||[;|\n]", command):
-        try:
-            words = shlex.split(segment)
-        except ValueError:
-            words = segment.split()
-        env = set()
-        while words and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0]):
-            env.add(words.pop(0))  # env assignments on this segment only
+SEPARATORS = set("&|;()")
+WRAPPERS = {"env", "command", "builtin", "exec", "nice", "nohup", "sudo", "time", "timeout", "xargs", "caffeinate"}
+SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "fish"}
+ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def segments(command):
+    """Split a shell line into simple commands, respecting quotes."""
+    lex = shlex.shlex(command.replace("\n", ";"), posix=True, punctuation_chars=True)
+    lex.whitespace_split = True
+    words = []
+    try:
+        for tok in lex:
+            if set(tok) <= SEPARATORS:
+                if words:
+                    yield words
+                words = []
+            else:
+                words.append(tok)
+    except ValueError:  # unbalanced quotes: rough split, so a push still gets seen
+        yield from (seg.split() for seg in re.split(r"[&|;()\n]", command) if seg.strip())
+        return
+    if words:
+        yield words
+
+
+def pushes(command, cwd, env=frozenset(), depth=0):
+    """Yield (repo_dir, push_args, env_assignments) for each `git push` in a shell command line.
+    Unwraps env/timeout/xargs-style prefixes, `sh -c '...'`, and `eval`."""
+    # ponytail: backtick substitution and exotic wrapper options (sudo -u USER) are not unwrapped
+    for words in segments(command):
+        seg_env = set(env)
+        while True:
+            while words and ASSIGNMENT.match(words[0]):
+                seg_env.add(words.pop(0))
+            if words and Path(words[0]).name in WRAPPERS:
+                words.pop(0)
+                while words and (words[0].startswith("-") or words[0][:1].isdigit()):
+                    words.pop(0)  # wrapper options and timeout durations
+                continue
+            break
         if not words:
             continue
-        if words[0] == "cd" and len(words) > 1:
+        name = Path(words[0]).name
+        if name in SHELLS or name == "eval":
+            if name == "eval":
+                inner = " ".join(words[1:])
+            else:
+                inner = next((words[i + 1] for i, w in enumerate(words[:-1])
+                              if re.match(r"^-[a-z]*c[a-z]*$", w)), None)
+            if inner and depth < 3:
+                yield from pushes(inner, cwd, frozenset(seg_env), depth + 1)
+            continue
+        if name == "cd" and len(words) > 1:
             cwd = str(Path(cwd, os.path.expanduser(words[1])))
             continue
-        if Path(words[0]).name != "git":
+        if name != "git":
             continue
         repo, i = cwd, 1
         while i < len(words) and words[i].startswith("-"):
@@ -42,7 +83,7 @@ def pushes(command, cwd):
                 repo = str(Path(repo, os.path.expanduser(words[i + 1])))
             i += 2 if opt in GIT_OPTS_WITH_VALUE and "=" not in words[i] else 1
         if i < len(words) and words[i] == "push":
-            yield repo, words[i + 1:], env
+            yield repo, words[i + 1:], seg_env
 
 
 PUSH_OPTS_WITH_VALUE = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
@@ -75,19 +116,16 @@ def targets(repo, args):
     return shas
 
 
-def main():
-    data = json.load(sys.stdin)
+def main(raw):
+    data = json.loads(raw)
     command = (data.get("tool_input") or {}).get("command", "")
     for repo, args, env in pushes(command, data.get("cwd") or os.getcwd()):
         if "AGENT_REVIEW_SKIP=1" in env or "--delete" in args or "-d" in args:
             continue  # deleting a remote ref ships no code
         common = git(repo, "rev-parse", "--git-common-dir")
-        if not common or not git(repo, "rev-parse", "HEAD"):
-            continue  # not a repo: git push fails on its own
-        shas = targets(repo, args)
-        stamps = Path(repo, common).resolve() / "agent-review"
+        shas = targets(repo, args) if common and git(repo, "rev-parse", "HEAD") else None  # unknown repo: fail closed
         missing = ["(could not resolve what this push ships)"] if shas is None else \
-            [s[:10] for s in shas if not (stamps / s).exists()]
+            [s[:10] for s in shas if not (Path(repo, common).resolve() / "agent-review" / s).exists()]
         if missing:
             print(f"Push blocked in {repo}: no review stamp for {', '.join(missing)}. "
                   "Run the luna-review skill (agent review) first. For Codex/pi-only code you reviewed, "
@@ -98,4 +136,11 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raw = sys.stdin.read()
+    try:
+        sys.exit(main(raw))
+    except Exception as e:  # Claude Code treats exit 1 as "allow", so a crash near a push must block
+        if "push" not in raw:
+            sys.exit(0)
+        print(f"Push gate error ({type(e).__name__}: {e}); blocking to be safe.", file=sys.stderr)
+        sys.exit(2)

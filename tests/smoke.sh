@@ -19,6 +19,16 @@ gate "$T" "git push origin --delete old";      [ $? = 0 ] && ok "gate allows ref
 gate "$T" "AGENT_REVIEW_SKIP=1 git push";      [ $? = 0 ] && ok "gate bypass works"                || bad "gate bypass works"
 gate "$T" "echo AGENT_REVIEW_SKIP=1; git push"; [ $? = 2 ] && ok "bypass must prefix the push"      || bad "bypass must prefix the push"
 gate "$T" "AGENT_REVIEW_SKIP=1 git status && git push"; [ $? = 2 ] && ok "bypass on another command does not count" || bad "bypass on another command does not count"
+for wrapped in "env git push" "env FOO=1 git push origin main" "command git push" "timeout 60 git push" \
+               "bash -c 'git push origin main'" "sh -lc \"cd $T && git push\"" "eval git push" "(cd $T && git push)" \
+               "echo \$(git push)" "xargs git push"; do
+  gate "$T" "$wrapped"; [ $? = 2 ] && ok "gate sees wrapped: $wrapped" || bad "gate sees wrapped: $wrapped"
+done
+gate "$T" "echo 'git push'";                   [ $? = 0 ] && ok "gate ignores quoted text"         || bad "gate ignores quoted text"
+gate "$T" "grep -n 'git push' README.md";      [ $? = 0 ] && ok "gate ignores grep for push"       || bad "gate ignores grep for push"
+gate /tmp "git -C /nonexistent push";          [ $? = 2 ] && ok "gate fails closed on unknown repo" || bad "gate fails closed on unknown repo"
+echo 'not json git push' | "$GATE" 2>/dev/null; [ $? = 2 ] && ok "gate crash near a push blocks"  || bad "gate crash near a push blocks"
+echo 'not json ls' | "$GATE" 2>/dev/null;      [ $? = 0 ] && ok "gate crash elsewhere allows"      || bad "gate crash elsewhere allows"
 "$AGENT" stamp -C "$T" >/dev/null 2>&1;        [ $? != 0 ] && ok "stamp refuses without --by/--note" || bad "stamp refuses without --by/--note"
 "$AGENT" stamp -C "$T/sub" --by claude --note smoke >/dev/null
 gate "$T" "git push";                          [ $? = 0 ] && ok "gate allows stamped HEAD"         || bad "gate allows stamped HEAD"

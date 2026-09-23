@@ -5,7 +5,7 @@
   agent pi     [-m PROVIDER/ID] [-e THINKING] [-C DIR] [--write] [--resume ID] PROMPT|-
   agent review [-m MODEL] [-e EFFORT] [-C DIR] [--base REF | --uncommitted] [PROMPT]
   agent stamp  [-C DIR] --by claude|craig --note TEXT
-      claude: Claude reviewed HEAD (code written only by Codex/pi)
+      claude: Claude reviewed HEAD (code written only by Codex/pi, or a targeted fix after the first push)
       craig:  Craig overruled open P0/P1 findings on HEAD (only after he says so in chat)
 
 Read-only unless --write. Prints only the final answer on stdout; one summary line

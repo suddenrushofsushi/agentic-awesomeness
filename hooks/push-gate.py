@@ -128,8 +128,8 @@ def main(raw):
             [s[:10] for s in shas if not (Path(repo, common).resolve() / "agent-review" / s).exists()]
         if missing:
             print(f"Push blocked in {repo}: no review stamp for {', '.join(missing)}. "
-                  "Run the luna-review skill (agent review) first. For Codex/pi-only code you reviewed, "
-                  "use `agent stamp --by claude --note ...`. Bypass only if Craig says so: AGENT_REVIEW_SKIP=1.",
+                  "Run the luna-review skill (agent review) first. For Codex/pi-only code you reviewed, or a targeted "
+                  "fix after the first push, use `agent stamp --by claude --note ...`. Bypass only if Craig says so: AGENT_REVIEW_SKIP=1.",
                   file=sys.stderr)
             return 2
     return 0

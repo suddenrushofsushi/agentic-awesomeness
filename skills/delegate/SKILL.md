@@ -16,7 +16,8 @@ Claude orchestrates. Codex or pi works only inside the folder Claude gives it. T
 ## 2. Pick the folder
 - Read-only question: the repo itself, no `--write`.
 - Code change in a git repo: a new worktree that Claude creates.
-  `git -C <repo> worktree add ~/github/.worktrees/<repo>/<slug> -b agent/<slug> <base>`
+  `git -C <repo> worktree add ~/github/.worktrees/<repo>/<slug> -b <branch> <base>`
+  Branch: work that will ship through cpw uses `feature/<TICKET>-<slug>` (for example `feature/TECH-1234-slug`). Throwaway or bakeoff work uses `agent/<slug>`.
   If the repo documents its own worktree setup (README, Makefile, scripts), use that instead.
 - **monarch-api: no worktrees yet.** Its docker compose setup does not work in a worktree. Run in the main tree, one write job at a time, and only when `git status` is clean. Delete this rule when Craig says monarch-api worktrees work.
 - The worker never creates, switches, or removes worktrees or branches.
@@ -40,7 +41,7 @@ Write it to a file and pass it with `-`. Include: goal, relevant files and conte
 - Accept: Claude commits on the worktree branch.
 - Code written only by Codex or pi, reviewed by Claude: `agent stamp -C <worktree> --by claude --note "<what you checked>"`.
 - Claude also wrote code on the branch: run the luna-review skill instead.
-- Push only on Craig's go. After merge or drop: `git worktree remove <worktree>`.
+- Push only on Craig's go. His go runs the cpw skill from its push step. After merge or drop: `git worktree remove <worktree>`.
 
 ## 7. Record
 Write one Obsidian note per `Agents/README.md` (kind: delegate). Report to Craig in 3 lines: what changed, did it pass, what needs his decision.

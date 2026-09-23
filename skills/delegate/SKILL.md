@@ -19,7 +19,7 @@ Claude orchestrates. Codex or pi works only inside the folder Claude gives it. T
   `git -C <repo> worktree add ~/github/.worktrees/<repo>/<slug> -b <branch> <base>`
   Branch: work that will ship through cpw uses `feature/<TICKET>-<slug>` (for example `feature/TECH-1234-slug`). Throwaway or bakeoff work uses `agent/<slug>`.
   If the repo documents its own worktree setup (README, Makefile, scripts), use that instead.
-- **monarch-api: no worktrees yet.** Its docker compose setup does not work in a worktree. Run in the main tree, one write job at a time, and only when `git status` is clean. Delete this rule when Craig says monarch-api worktrees work.
+- monarch-api: `make up` in the worktree starts its own stack. Run `make wt-down` before `git worktree remove`.
 - The worker never creates, switches, or removes worktrees or branches.
 
 ## 3. Write the brief

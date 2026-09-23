@@ -1,208 +1,98 @@
 # agentic-awesomeness
 
-One local, self-hosted chat workspace where several coding-agent harnesses live as bots, answer @mentions, and talk to each other while you watch. Built on [Buzz by Block](https://github.com/block/buzz) (Apache-2.0). Nothing leaves your machine except the model API calls each harness already makes.
+Claude Code (in the Claude Desktop Code tab) is the one place you work. From there it drives OpenAI Codex CLI and the [pi coding agent](https://pi.dev) as headless workers. It can hand them tasks, run the same prompt across many models, get a blind second opinion on a design, and send every Claude-written change through a Codex review before any push. Everything runs on your Mac. Only the model API calls leave it.
 
-Bots included:
+## Pieces
 
-| bot | harness | ACP adapter | default model |
-|---|---|---|---|
-| `ea` | Claude Code (your `~/.claude` skills, MCP, CLAUDE.md) | `@agentclientprotocol/claude-agent-acp` | `claude-fable-5-1` |
-| `claude` | Claude Code, pointed at a repo | same | `claude-fable-5-1` |
-| `codex` | OpenAI Codex CLI (your `~/.codex` config) | `@agentclientprotocol/codex-acp` | `gpt-5.6-sol` high |
-| `local` | [pi coding agent](https://pi.dev) on local models only | `@geohar/pi-acp` | oMLX `Qwen3.8-27B-oQ8e-mtp` at `localhost:8000` |
-| `hermes` | [Hermes Agent](https://hermes-agent.nousresearch.com) | none, Hermes's own Buzz plugin | OpenRouter `deepseek/deepseek-v4-pro`, swappable; also cron and webhook ingress |
+| path | what it does |
+|---|---|
+| `bin/agent` | One wrapper: `agent codex`, `agent pi`, `agent review`, `agent stamp`. Read-only unless `--write`. Prints only the final answer; saves prompt, raw events, answer, and metadata under `~/.agent-runs/`. |
+| `hooks/push-gate.py` | Claude Code `PreToolUse` hook. Blocks Claude's `git push` unless HEAD has a review stamp. |
+| `skills/delegate` | Hand a task to Codex or pi in a folder Claude controls, review the result, land it. |
+| `skills/bakeoff` | Same prompt to many models, results side by side. |
+| `skills/blind-draft` | Codex drafts a design from the same brief without seeing Claude's; Claude compares the two. |
+| `skills/luna-review` | Codex reviews Claude's branch before push; fix-or-dispute loop, max 3 rounds. |
+| `tests/smoke.sh` | Offline checks for the gate and stamps, one live prompt per agent, `--review` for one real review. |
 
-Diagram of the whole thing: [docs/cross-talk.md](docs/cross-talk.md).
-
-## How it fits together
-
-- **Buzz relay** (Rust, Nostr protocol) on `ws://localhost:3000`, backed by Postgres, Redis, MinIO in Docker.
-- **Buzz desktop** (Tauri) is your UI. Channels, threads, DMs.
-- **Bots** are standalone `buzz-acp` processes, one per bot, started by `bots/bots.sh`. Each wraps an ACP adapter over stdio, which drives the real harness binary with its real config. The desktop app can also manage agents itself, but that path hard-codes the working directory to `~/.buzz-dev` and hits open bug [#7023](https://github.com/block/buzz/issues/7023), so we do not use it.
-- **Hermes** skips `buzz-acp`. Its gateway has a native Buzz platform plugin that talks to the relay directly.
-- A bot wakes only when an event carries its pubkey (an @mention). It replies by calling the Buzz MCP tool. Plain text is not delivered. If a reply @mentions another bot, that bot wakes. That is the cross-talk.
-
-## Prerequisites (macOS, Apple Silicon)
-
-Tested on macOS 27, 128 GB RAM. Less RAM is fine; the relay is small, the harnesses are what cost.
-
-```sh
-brew install rust node pnpm docker        # or Docker Desktop / OrbStack; the daemon must be running
-npm i -g @agentclientprotocol/claude-agent-acp @agentclientprotocol/codex-acp @geohar/pi-acp
-npm i -g @earendil-works/pi-coding-agent  # pi >= 0.86
-pi install npm:pi-mcp-adapter             # required: pi-acp passes --mcp-config, only this extension understands it
+```
+agent codex  [-m MODEL] [-e EFFORT] [-C DIR] [--write] [--resume ID] PROMPT|-
+agent pi     [-m PROVIDER/ID] [-e THINKING] [-C DIR] [--write] [--resume ID] PROMPT|-
+agent review [-m MODEL] [-e EFFORT] [-C DIR] [--base REF | --uncommitted] [PROMPT]
+agent stamp  [-C DIR] --by claude --note TEXT
 ```
 
-Harnesses you must already have and be logged into:
+## Why CLIs and not MCP servers
 
-- Claude Code (`claude auth status` must say `loggedIn: true`).
-- Codex CLI, logged in via ChatGPT. Note the `CODEX_PATH` trap below.
-- Hermes Agent (optional; skip the `hermes` bot if you do not use it).
+Codex CLI 0.155 no longer ships `codex mcp-server`. Hermes Agent's MCP mode exposes messaging conversations, not task runs. pi has no MCP server. Claude Code already runs CLIs in the background and gets a notice when each one ends, so a thin wrapper is less code than three servers and has no tool-call timeout.
 
-Keys: an OpenRouter key for pi and Hermes. Put it in pi with `/login openrouter` inside `pi`, and in the Hermes profile `.env` (see `hermes/SETUP.md`). Never paste keys into this repo.
+## Models
+
+| job | harness | default model |
+|---|---|---|
+| delegated code work | `agent codex` | `gpt-6-sol` |
+| design back-and-forth, blind drafts | `agent codex` | `gpt-6-astra` high, `gpt-6-sol` as backup |
+| pre-push review | `agent review` (`codex review`) | `gpt-6-luna` high |
+| local models | `agent pi` | oMLX `Qwen3.8-27B-oQ8e-mtp` |
+| open-weight models | `agent pi -m openrouter/<id>` | any OpenRouter model |
+| Claude models | Claude Code subagents | per call |
+
+## Rules the setup enforces
+
+- **Claude owns git.** Claude creates worktrees and branches, commits, and pushes. Workers only read and edit inside the folder they get. `agent` prepends these rules to every task.
+- **Codex** runs in its sandbox: `read-only`, or `workspace-write` with network on for `--write`.
+- **pi** read-only mode is a tool allowlist (`read,grep,find,ls,evaluate,mcp,mcpScript`). With `--write` pi has no path sandbox, so Claude checks the main tree for stray edits after each pi job.
+- **Cross-family review.** Claude-written code goes to Codex `gpt-6-luna`. Code written only by Codex or pi goes to Claude, who then runs `agent stamp --by claude`.
+- **Review stamps** live in `<git-common-dir>/agent-review/<sha>`. A new commit needs a new stamp. The gate only stops Claude Code; pushes from your own terminal are not touched. `AGENT_REVIEW_SKIP=1 git push` bypasses it.
 
 ## Install
 
-```sh
-git clone https://github.com/suddenrushofsushi/agentic-awesomeness ~/github/agentic-awesomeness
-git clone https://github.com/suddenrushofsushi/buzz ~/github/buzz   # fork of block/buzz, branch `agentic` carries our patches; upstream tested at ef2aa1ae
-cd ~/github/buzz && git checkout agentic && cp .env.example .env
+Needs: Claude Code, Codex CLI (logged in), pi 0.86+ with the `pi-mcp-adapter` extension, python3. oMLX is optional, for local models.
+
+```bash
+git clone git@github.com:suddenrushofsushi/agentic-awesomeness.git ~/github/agentic-awesomeness
+ln -s ~/github/agentic-awesomeness/bin/agent ~/.local/bin/agent
+for s in delegate bakeoff blind-draft luna-review; do ln -s ~/github/agentic-awesomeness/skills/$s ~/.claude/skills/$s; done
 ```
 
-The scripts expect the Buzz clone at `~/github/buzz`. Override with `BUZZ_DIR=/elsewhere`.
+Add the gate to `hooks.PreToolUse` in `~/.claude/settings.json`:
 
-Edit `~/github/buzz/.env`: set `BUZZ_RELAY_PRIVATE_KEY` to a fresh key (`cargo run -p buzz-admin -- generate-key` inside `buzz/` after the first build, or any 64-hex Nostr secret). If port 5432 is taken on your machine, change `PGPORT` and `DATABASE_URL` to `5433` and add `~/github/buzz/docker-compose.override.yml`:
-
-```yaml
-services:
-  postgres:
-    ports: !override
-      - "127.0.0.1:5433:5432"
+```json
+{ "matcher": "Bash", "hooks": [ { "type": "command", "command": "~/github/agentic-awesomeness/hooks/push-gate.py", "timeout": 10 } ] }
 ```
 
-Then:
+Then run `tests/smoke.sh` (add `--review` for one real Codex review).
 
-```sh
-cd ~/github/agentic-awesomeness
-./buzz-local.sh up      # docker services, migrations, seed community, relay, desktop dev build. First run compiles for a few minutes.
+Environment overrides: `CODEX_BIN` (default: the binary inside `ChatGPT.app`), `AGENT_RUNS` (default `~/.agent-runs`).
+
+pi on oMLX, in `~/.pi/agent/models.json`:
+
+```json
+{ "providers": { "omlx": {
+  "baseUrl": "http://localhost:11800/v1",
+  "api": "openai-completions",
+  "apiKey": "!python3 -c 'import json;print(json.load(open(\"<home>/.omlx/settings.json\"))[\"auth\"][\"api_key\"])'",
+  "models": [ { "id": "Qwen3.8-27B-oQ8e-mtp", "reasoning": true } ] } } }
 ```
 
-`buzz-local.sh` avoids `just` and Hermit and uses your system Rust and Node. Subcommands: `services | relay | desktop | up | status | stop | stop-all`. Logs in `buzz/.local-run/`.
+The OpenRouter key goes in `~/.pi/agent/auth.json`. The skills write run notes to an Obsidian vault through an Obsidian MCP server (`Agents/Runs/`). Without one, the reports stay in chat and `~/.agent-runs/`.
 
-## First run in the desktop
+## Scheduled runs
 
-1. Create an identity. Back up the key it shows you.
-2. **Set up later** on "Connect your AI provider". Our bots bring their own logins.
-3. **Join a community**. Paste `ws://localhost:3000`.
-4. Pick a display name. Bots resolve `@name` against it.
-5. Create a channel, for example `triage`.
-6. Find your owner pubkey: `grep -o 'identity pubkey [0-9a-f]*' buzz/.local-run/desktop.log`. Write it to `bots/PUBKEYS.txt` as `owner <hex>`.
+Use Claude Desktop scheduled tasks. They run on your Mac with your local MCP servers and files. The app must be open; a run that was missed fires at the next launch. Cloud Routines run on Anthropic machines and cannot reach local MCP servers or files.
 
-If the window shows "Importing a module script failed", press Cmd+R. It is the Vite dev server reloading.
+## Traps
 
-## Bots
+- `pi -p` waits for stdin when stdin is open. `agent` closes it.
+- `codex exec resume` takes no `-s` or `-C`. `agent` uses `-c sandbox_mode=...` and the working folder.
+- `codex review` writes findings to stdout and its transcript to stderr. `agent review` keeps them apart.
+- `/usr/local/bin/codex` from the ChatGPT app is a symlink. Codex looks for `codex-code-mode-host` next to the path it was started from, so shell tools fail closed unless you call the real binary or link the host too.
+- "Selected model is at capacity" is an OpenAI `server_overloaded` error. It is transient: retry, or use the backup model.
+- oMLX defaults to port 8000, which docker compose web stacks also like. Move it (`server.port` in `~/.omlx/settings.json`).
 
-```sh
-bots/bots.sh keygen all              # one Nostr key per bot into bots/keys/ (0600, gitignored); appends pubkeys to bots/PUBKEYS.txt
-bots/bots.sh start all               # or one name: ea claude codex local
-bots/bots.sh status | stop | restart | logs <name>
-```
+## Legacy
 
-Each bot has `bots/<name>.env` (sourced by bash):
+`legacy/buzz/` holds the first version: a local [Buzz](https://github.com/block/buzz) chat workspace with the harnesses as bots that talk to each other. Retired 2026-09-23 because the local Buzz stack was unstable. Its README still documents that setup.
 
-- `BOT_CMD` adapter binary, `BOT_CWD` working directory, `BOT_ALLOW` the other bots allowed to wake it. Anything `export`ed is passed to the harness.
-- Prompt = `bots/prompts/_common.md` (shared protocol: posting rules, Obsidian memory, Jev) + `bots/prompts/<name>.md` (role). `bots.sh` concatenates them at start.
+## License
 
-Give every bot a relay profile once so `@name` resolves and Hermes can connect:
-
-```sh
-export BUZZ_RELAY_URL=http://localhost:3000
-for n in ea claude codex local hermes; do
-  BUZZ_PRIVATE_KEY=$(awk -F= '/^SK=/{print $2}' bots/keys/$n.key) buzz/target/debug/buzz users set-profile --name "$n"
-done
-```
-
-Bots join channels themselves. Get the channel UUID from `buzz channels list`, then:
-
-```sh
-BUZZ_PRIVATE_KEY=<bot sk> buzz/target/debug/buzz channels join --channel <uuid>
-```
-
-Or add them by name in the desktop. Same result.
-
-### Per-harness notes
-
-**Claude bots.** `claude-agent-acp` uses the Claude Agent SDK, not your `claude` binary, but it loads `~/.claude` settings, skills, MCP servers, and plugins. `bots.sh` seeds `<BOT_CWD>/.claude/settings.local.json` from `bots/<name>.settings.json` (falls back to `bots/claude.settings.json`) with bypass mode and that bot's MCP `permissions.deny` list. Keep Claude bot cwds outside each other and outside any repo whose `.claude/settings*` you do not intend to inherit: Claude Code applies a repo root's settings to every subdirectory. That is how `ea` briefly lost Google Workspace. Model via `ANTHROPIC_MODEL`.
-
-**Codex bot.** `CODEX_PATH` must be the real binary. If `/usr/local/bin/codex` is a symlink into the ChatGPT app, Codex looks for `codex-code-mode-host` beside the symlink, does not find it, and shell commands fail closed. Either point `CODEX_PATH` at `/Applications/ChatGPT.app/Contents/Resources/codex` (what `bots/codex.env` does) or `sudo ln -s /Applications/ChatGPT.app/Contents/Resources/codex-code-mode-host /usr/local/bin/`. Mode `INITIAL_AGENT_MODE=agent-full-access`. Model via `CODEX_CONFIG` JSON. Every turn loads all MCP servers from `~/.codex/config.toml`.
-
-**local bot (pi).** Needs pi 0.86+, the `pi-mcp-adapter` extension, and a provider in `~/.pi/agent/models.json`. Ours is oMLX, an OpenAI-compatible MLX server on `localhost:8000`; the API key is read from `~/.omlx/settings.json` with pi's `"apiKey": "!command"` form so it is never copied. `defaultProvider`/`defaultModel` in `~/.pi/agent/settings.json`. Restart the bot after changing pi auth or settings. pi has no permission gating and no cost caps. MCP servers for pi go in `~/.pi/agent/mcp.json`; `$env:VAR` values are resolved from the bot's environment (`bots/local.env` exports them).
-
-**Hermes bot.** See [hermes/SETUP.md](hermes/SETUP.md). Runs as a launchd service under its own Hermes profile so your default Hermes is untouched. Its system prompt is the profile's `SOUL.md`; keep it in step with `bots/prompts/_common.md`. MCP servers: `hermes -p buzz mcp add <name> --command <cmd> --env K=V --args <args>` (`--args` must come last).
-
-## Shared memory and fast classification
-
-- Obsidian is the shared memory layer. Folder `Buzz/` in the vault: `Threads/<channel>/<thread>.md`, `Memory/shared.md`, `Memory/<bot>.md`, `Decisions.md`. Every bot reaches it through the Obsidian MCP server (Local REST API plugin on `127.0.0.1:27124`). The protocol is in `bots/prompts/_common.md`, so no per-message prompting is needed. Buzz's own per-agent memory (`memory=true` in the buzz-acp log) stays on underneath.
-- [typesafe-mcp](https://github.com/itsmostafa/typesafe-mcp) gives every harness an `evaluate` tool backed by TypeSafe's Jev decision model through OpenRouter's `/api/alpha/decisions`. Yes/no, choice, and score questions with calibrated probabilities in ~300 ms. Install: `curl -fsSL https://raw.githubusercontent.com/itsmostafa/typesafe-mcp/main/install.sh | sh`, then `evaluate setup mcp` (Claude Code, Codex) and `evaluate setup pi`. Needs `OPENROUTER_API_KEY`. Not a bot on purpose: it does not generate text.
-
-## Scheduled and event-driven runs
-
-- **Schedule.** `bots/schedule-ea.sh install <channel-uuid> [model]` writes a launchd job that posts `@ea use <model>: /ea` into the channel at 06, 09, 12, 15, 18 on weekdays and 12:00 on Saturday and Sunday. Default model `opus`. `bots/schedule-ea.sh remove` undoes it. No heartbeat needed.
-- **Webhooks.** The Hermes gateway runs an HTTP listener on `:8644` (`WEBHOOK_ENABLED=true` in the profile `.env`, `gateway.platforms.webhook.enabled: true` in its `config.yaml`). Routes live under `gateway.platforms.webhook.extra.routes.<name>` with `deliver: buzz`, `deliver_only: true`, `prompt: "{text}"`, `deliver_extra.chat_id: <channel uuid>`. A signed `POST /webhooks/<name>` with body `{"text": "..."}` lands in that channel with no model turn. Signature: `X-Hub-Signature-256: sha256=<hmac-sha256 of body>`. Unsigned is 401. The `hermes webhook subscribe` CLI ignores `-p <profile>`; write routes into the profile config instead. Note: `webhook subscribe` also refuses until `gateway.platforms.webhook.enabled` is set in config.yaml, not just `.env`.
-- **Tunnel.** `cloudflared` named tunnel (`~/.cloudflared/config.yml`) exposes only `^/webhooks/` on one hostname to `localhost:8644`; everything else is 404. Runs as user LaunchAgent `com.agentic.cloudflared-buzz`. One CNAME in the zone, nothing else touched.
-- **Helper.** `tools/buzz-post.sh <route> "text"` signs and posts. Set `BUZZ_WEBHOOK_URL=https://<host>` to go through the tunnel.
-
-## Model override in chat
-
-Our fork's `buzz-acp` (branch `agentic`, commit f3d0871) reads a directive off the first message of a session, or any later message in it:
-
-```
-@codex use gpt-6-astra: design the schema
-@claude use opus: review it when codex posts
-model=deepseek/deepseek-v4-pro fix the failing test
-```
-
-The directive is stripped from the text and applied to that thread's session with `session/set_config_option {configId: "model"}`. Works for Claude, Codex, and pi adapters. Failures log a warning and keep the previous model. Verified: `@claude use sonnet:` answered as `claude-sonnet-5`.
-
-## MCP per bot
-
-Claude bots: `permissions.deny` in the seeded settings (`mcp__<server>` denies a whole server). Codex: `mcp_servers.<name>.enabled=false` inside `CODEX_CONFIG` in `bots/codex.env`. pi and Hermes: only what is declared for them.
-
-| bot | keeps | denied |
-|---|---|---|
-| `ea` | obsidian, google_workspace, atlassian, outline, evaluate | postgres, snowflake, aws, grafana, coolify, playwright |
-| `claude` | obsidian, atlassian, outline, postgres, grafana, aws, coolify, playwright, evaluate | google_workspace, snowflake |
-| `codex` | obsidian, atlassian, outline, postgres, grafana, aws, playwright, node_repl, evaluate | google_workspace, snowflake, computer-use |
-| `local` | obsidian, evaluate | everything else |
-| `hermes` | obsidian, evaluate | everything else |
-
-Verified by asking the bot to call a denied tool: the tool is absent from its context. Self-reported "list your MCP servers" answers are unreliable; test with a call.
-
-## Cross-talk and guard rails
-
-- `bots.sh` starts every bot with `--respond-to allowlist`: the owner plus `BOT_ALLOW`. A bot never hears anyone else.
-- Buzz has **no loop guard and no dollar cap**. The prompts carry a soft rule: do not @mention a bot just to acknowledge it. Caps that exist: `--max-turn-duration 7200`, idle timeout 1500 s.
-- Verified chain: owner → `@claude` → `@codex` → `@claude` → done. Four hops, stopped on its own.
-- Known Buzz gap [#7730](https://github.com/block/buzz/issues/7730): a thread reply without an @mention never reaches the bot.
-
-## Where things live
-
-| what | where |
-|---|---|
-| relay data | docker volumes `buzz-postgres-data`, `buzz-minio-data` |
-| desktop app data (dev build) | `~/Library/Application Support/xyz.block.buzz.app.dev/` |
-| owner key | macOS Keychain, service `buzz-desktop-dev` |
-| relay signing key | `buzz/.env` |
-| bot keys | `bots/keys/*.key` (gitignored) |
-| bot pubkeys | `bots/PUBKEYS.txt` (gitignored) |
-| bot logs | `bots/logs/` |
-| Hermes profile | `~/.hermes/profiles/buzz/` |
-
-## Ports
-
-| what | port |
-|---|---|
-| relay WS + REST | 3000 |
-| relay health `/_readiness` | 8080 |
-| relay metrics | 9102 |
-| Postgres | 5432 (or 5433 with the override) |
-| Redis | 6379 |
-| MinIO / console | 9000 / 9001 |
-| Vite dev server | 17371 |
-
-## Tools
-
-`tools/acp-smoke.mjs` is a 70-line ACP client for testing any adapter outside Buzz:
-
-```sh
-node tools/acp-smoke.mjs --cwd . --prompt "say hi" -- /opt/homebrew/bin/codex-acp
-```
-
-`tools/harnesses.md` records what each adapter exposes: cwd, config it inherits, permission and model knobs, caps.
-
-## Open items
-
-- Dollar caps. `buzz-acp` does not pass `maxBudgetUsd` / `maxTurns` ACP metadata to `claude-agent-acp`. Patch candidate.
-- Trim the MCP servers Codex inherits per turn via `CODEX_CONFIG`.
-- Per-message model routing for Hermes.
-- The desktop's built-in starter agents cannot be hidden ([#7750](https://github.com/block/buzz/issues/7750)). Ignore them.
+MIT

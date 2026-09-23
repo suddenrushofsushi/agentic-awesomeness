@@ -1,0 +1,207 @@
+#!/usr/bin/env python3
+"""agent: run Codex or pi headless for Claude Code, and run Luna pre-push reviews.
+
+  agent codex  [-m MODEL] [-e EFFORT] [-C DIR] [--write] [--resume ID] PROMPT|-
+  agent pi     [-m PROVIDER/ID] [-e THINKING] [-C DIR] [--write] [--resume ID] PROMPT|-
+  agent review [-m MODEL] [-e EFFORT] [-C DIR] [--base REF | --uncommitted] [PROMPT]
+  agent stamp  [-C DIR] --by claude --note TEXT     # Claude reviewed HEAD (Codex/pi-authored code only)
+
+Read-only unless --write. Prints only the final answer on stdout; one summary line
+on stderr. Every run is saved under ~/.agent-runs/<time>-<agent>-<model>/.
+"""
+import argparse, datetime, json, os, subprocess, sys, time
+from pathlib import Path
+
+CODEX = os.environ.get("CODEX_BIN", "/Applications/ChatGPT.app/Contents/Resources/codex")
+RUNS = Path(os.environ.get("AGENT_RUNS", "~/.agent-runs")).expanduser()
+CODEX_MODEL, REVIEW_MODEL, REVIEW_EFFORT = "gpt-6-sol", "gpt-6-luna", "high"
+PI_READ_TOOLS = "read,grep,find,ls,evaluate,mcp,mcpScript"
+RULES = """You are a delegated worker. Claude Code owns this task and reviews your work.
+- Work only inside {cwd}.
+- {mode}
+- Never run git commit, push, branch, checkout, switch, reset, rebase, stash, merge, or worktree.
+- End with a short report: what you changed (files), what you ran to verify it, what is still open."""
+READ_ONLY = "Read-only task: do not create, change, or delete files."
+WRITE = "You may change files inside that folder. Leave every change uncommitted."
+
+
+def git(cwd, *args):
+    p = subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True)
+    return p.stdout.strip() if p.returncode == 0 else None
+
+
+def new_run(agent, model, prompt):
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    d = RUNS / f"{stamp}-{agent}-{(model or 'default').replace('/', '_')}"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "prompt.md").write_text(prompt)
+    return d
+
+
+def execute(cmd, cwd, run_dir, stdout_name="events.jsonl"):
+    t = time.time()
+    with open(run_dir / stdout_name, "w") as out, open(run_dir / "stderr.log", "w") as err:
+        rc = subprocess.run(cmd, cwd=cwd, stdin=subprocess.DEVNULL, stdout=out, stderr=err).returncode
+    return rc, round(time.time() - t)
+
+
+def events(run_dir):
+    for line in (run_dir / "events.jsonl").read_text().splitlines():
+        try:
+            yield json.loads(line)
+        except ValueError:
+            pass
+
+
+def finish(run_dir, meta, answer):
+    (run_dir / "answer.md").write_text(answer)
+    (run_dir / "meta.json").write_text(json.dumps(meta, indent=2))
+    if answer.strip():
+        print(answer.strip())
+    else:  # nothing came back: show why
+        print(f"[agent] no answer. stderr tail:\n{(run_dir / 'stderr.log').read_text()[-2000:]}")
+        for e in meta.get("errors", []):
+            print(f"[agent] error: {e}")
+    extra = " ".join(f"{k}={meta[k]}" for k in ("session", "cost") if meta.get(k))
+    print(f"[agent] {meta['agent']} {meta['model']} {meta['seconds']}s rc={meta['rc']} {extra} run={run_dir}",
+          file=sys.stderr)
+    return meta["rc"] or (0 if answer.strip() else 1)
+
+
+def codex(a, prompt):
+    model = a.model or CODEX_MODEL
+    sandbox = "workspace-write" if a.write else "read-only"
+    opts = ["--json", "--skip-git-repo-check", "-m", model, "-c", f'sandbox_mode="{sandbox}"']
+    if a.write:
+        opts += ["-c", "sandbox_workspace_write.network_access=true"]
+    if a.effort:
+        opts += ["-c", f'model_reasoning_effort="{a.effort}"']
+    run_dir = new_run("codex", model, prompt)
+    opts += ["-o", str(run_dir / "answer.md")]
+    cmd = [CODEX, "exec", "resume", *opts, a.resume, prompt] if a.resume else [CODEX, "exec", *opts, prompt]
+    rc, secs = execute(cmd, a.cwd, run_dir)
+    meta = dict(agent="codex", model=model, effort=a.effort, cwd=a.cwd, write=a.write, rc=rc, seconds=secs,
+                session=a.resume, errors=[])
+    for e in events(run_dir):
+        if e.get("type") == "thread.started":
+            meta["session"] = e.get("thread_id")
+        elif e.get("type") == "turn.completed":
+            meta["usage"] = e.get("usage")
+        elif e.get("type") in ("error", "turn.failed"):
+            meta["errors"].append(e.get("message") or e.get("error"))
+    answer_file = run_dir / "answer.md"
+    return finish(run_dir, meta, answer_file.read_text() if answer_file.exists() else "")
+
+
+def pi(a, prompt):
+    opts = ["-p", "--mode", "json", "--append-system-prompt", rules(a)]
+    if a.model and "/" in a.model:
+        provider, mid = a.model.split("/", 1)
+        opts += ["--provider", provider, "--model", mid]
+    elif a.model:
+        opts += ["--model", a.model]
+    if a.effort:
+        opts += ["--thinking", a.effort]
+    if not a.write:
+        opts += ["--tools", PI_READ_TOOLS]
+    if a.resume:
+        opts += ["--session", a.resume]
+    run_dir = new_run("pi", a.model, prompt)
+    rc, secs = execute(["pi", *opts, prompt], a.cwd, run_dir)
+    meta = dict(agent="pi", model=a.model or "default", effort=a.effort, cwd=a.cwd, write=a.write, rc=rc,
+                seconds=secs, session=a.resume, errors=[])
+    answer = ""
+    for e in events(run_dir):
+        if e.get("type") == "session":
+            meta["session"] = e.get("id")
+        elif e.get("type") == "agent_end":
+            last = next((m for m in reversed(e.get("messages", [])) if m.get("role") == "assistant"), {})
+            answer = "\n".join(c.get("text", "") for c in last.get("content", []) if c.get("type") == "text")
+            meta["model"] = f"{last.get('provider')}/{last.get('model')}" if last.get("model") else meta["model"]
+            meta["usage"] = last.get("usage")
+            meta["cost"] = round(((last.get("usage") or {}).get("cost") or {}).get("total", 0), 4) or None
+            if last.get("errorMessage"):
+                meta["errors"].append(last["errorMessage"])
+    return finish(run_dir, meta, answer)
+
+
+def default_base(cwd):
+    ref = git(cwd, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+    if ref:
+        return ref
+    return next((b for b in ("origin/main", "origin/master", "main", "master")
+                 if git(cwd, "rev-parse", "--verify", "--quiet", b)), None)
+
+
+def stamp_path(cwd):
+    head, common = git(cwd, "rev-parse", "HEAD"), git(cwd, "rev-parse", "--git-common-dir")
+    if not head or not common:
+        sys.exit(f"[agent] {cwd} is not a git repo with a commit")
+    return head, Path(cwd, common).resolve() / "agent-review" / head
+
+
+def write_stamp(cwd, **info):
+    head, path = stamp_path(cwd)
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(json.dumps(dict(head=head, time=datetime.datetime.now().isoformat(), **info), indent=2))
+    return head
+
+
+def review(a, prompt):
+    model, effort = a.model or REVIEW_MODEL, a.effort or REVIEW_EFFORT
+    head = None if a.uncommitted else stamp_path(a.cwd)[0]
+    base = None if a.uncommitted else (a.base or default_base(a.cwd))
+    if not a.uncommitted and not base:
+        sys.exit("[agent] no base branch found; pass --base")
+    cmd = [CODEX, "review", "-c", f'model="{model}"', "-c", f'model_reasoning_effort="{effort}"']
+    cmd += ["--uncommitted"] if a.uncommitted else ["--base", base]
+    if prompt:
+        cmd.append(prompt)
+    run_dir = new_run("review", model, prompt)
+    rc, secs = execute(cmd, a.cwd, run_dir, stdout_name="review.md")
+    text = (run_dir / "review.md").read_text()
+    meta = dict(agent="review", model=model, effort=effort, cwd=a.cwd, base=base, head=head, rc=rc, seconds=secs)
+    if rc == 0 and head:
+        if git(a.cwd, "rev-parse", "HEAD") == head:  # code did not move while Luna read it
+            write_stamp(a.cwd, reviewer=model, run=str(run_dir), base=base)
+        else:
+            meta["errors"] = ["HEAD moved during review; not stamped"]
+    return finish(run_dir, meta, text)
+
+
+def rules(a):
+    return RULES.format(cwd=a.cwd, mode=WRITE if a.write else READ_ONLY)
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="agent", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("agent", choices=["codex", "pi", "review", "stamp"])
+    ap.add_argument("prompt", nargs="?", help="prompt text, or - to read stdin")
+    ap.add_argument("-m", "--model")
+    ap.add_argument("-e", "--effort")
+    ap.add_argument("-C", "--cwd", default=os.getcwd())
+    ap.add_argument("--write", action="store_true")
+    ap.add_argument("--resume")
+    ap.add_argument("--base")
+    ap.add_argument("--uncommitted", action="store_true")
+    ap.add_argument("--by")
+    ap.add_argument("--note")
+    a = ap.parse_args()
+    a.cwd = str(Path(a.cwd).expanduser().resolve())
+    prompt = sys.stdin.read() if a.prompt == "-" else (a.prompt or "")
+
+    if a.agent == "stamp":
+        if a.by != "claude" or not a.note:
+            sys.exit("[agent] stamp needs --by claude --note '<what you reviewed>'")
+        print(f"[agent] stamped {write_stamp(a.cwd, reviewer='claude', note=a.note)}")
+        return 0
+    if a.agent == "review":
+        return review(a, prompt)
+    if not prompt.strip():
+        sys.exit("[agent] empty prompt")
+    task = f"{rules(a)}\n\n---\n\n{prompt}" if a.agent == "codex" else prompt
+    return codex(a, task) if a.agent == "codex" else pi(a, prompt)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

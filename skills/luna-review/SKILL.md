@@ -4,7 +4,7 @@ description: Use before any git push of code that Claude wrote (Fable, Opus, Son
 ---
 # luna-review
 
-The push gate (`hooks/push-gate.py` in agentic-awesomeness) blocks Claude's `git push` until every commit it ships has a review stamp. `agent review` writes the stamp only when Luna finishes a review of that exact HEAD with no [P0] or [P1] finding.
+The push gate (`hooks/push-gate.py` in agentic-awesomeness) blocks Claude's `git push` until the tip of each pushed ref has a review stamp. A stamp covers the whole reviewed diff from the base to that commit. `agent review` writes the stamp only when Luna finishes a review of that exact HEAD with no [P0] or [P1] finding.
 
 ## Who reviews what
 - Code written by Claude: Luna, through this skill.

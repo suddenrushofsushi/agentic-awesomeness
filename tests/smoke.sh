@@ -17,6 +17,8 @@ gate /tmp "cd $T && git push";                 [ $? = 2 ] && ok "gate follows cd
 gate /tmp "git -C $T push";                    [ $? = 2 ] && ok "gate follows -C"                  || bad "gate follows -C"
 gate "$T" "git push origin --delete old";      [ $? = 0 ] && ok "gate allows ref delete"           || bad "gate allows ref delete"
 gate "$T" "AGENT_REVIEW_SKIP=1 git push";      [ $? = 0 ] && ok "gate bypass works"                || bad "gate bypass works"
+gate "$T" "echo AGENT_REVIEW_SKIP=1; git push"; [ $? = 2 ] && ok "bypass must prefix the push"      || bad "bypass must prefix the push"
+gate "$T" "AGENT_REVIEW_SKIP=1 git status && git push"; [ $? = 2 ] && ok "bypass on another command does not count" || bad "bypass on another command does not count"
 "$AGENT" stamp -C "$T" >/dev/null 2>&1;        [ $? != 0 ] && ok "stamp refuses without --by/--note" || bad "stamp refuses without --by/--note"
 "$AGENT" stamp -C "$T/sub" --by claude --note smoke >/dev/null
 gate "$T" "git push";                          [ $? = 0 ] && ok "gate allows stamped HEAD"         || bad "gate allows stamped HEAD"

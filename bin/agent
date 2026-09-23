@@ -18,7 +18,7 @@ from pathlib import Path
 CODEX = os.environ.get("CODEX_BIN", "/Applications/ChatGPT.app/Contents/Resources/codex")
 RUNS = Path(os.environ.get("AGENT_RUNS", "~/.agent-runs")).expanduser()
 CODEX_MODEL, REVIEW_MODEL, REVIEW_EFFORT = "gpt-6-sol", "gpt-6-luna", "high"
-PI_READ_TOOLS = "read,grep,find,ls,evaluate,mcp,mcpScript"
+PI_READ_TOOLS = "read,grep,find,ls,evaluate"  # no mcp/mcpScript: they reach MCP tools that write
 RULES = """You are a delegated worker. Claude Code owns this task and reviews your work.
 - Work only inside {cwd}.
 - {mode}

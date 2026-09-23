@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Claude Code PreToolUse hook (matcher: Bash). Blocks `git push` unless every commit it
-ships (HEAD, or each refspec's source) has a review stamp from `agent review` (Luna) or
-`agent stamp`. Pushes it cannot resolve (--all, --tags, --mirror, bad refs) are blocked.
-Exit 2 = block.
+"""Claude Code PreToolUse hook (matcher: Bash). Blocks `git push` unless the tip of each
+pushed ref (HEAD, or each refspec's source) has a review stamp from `agent review` (Luna)
+or `agent stamp`. A stamp covers the whole reviewed diff from the base to that commit, so
+commits below a stamped tip need no stamp of their own. Pushes it cannot resolve
+(--all, --tags, --mirror, bad refs) are blocked. Exit 2 = block.
 
-Bypass, only when Craig says so: prefix the command with AGENT_REVIEW_SKIP=1.
+Bypass, only when Craig says so: AGENT_REVIEW_SKIP=1 as a prefix on the git push itself.
 """
 import json, os, re, shlex, subprocess, sys
 from pathlib import Path
@@ -18,14 +19,15 @@ def git(cwd, *args):
 
 
 def pushes(command, cwd):
-    """Yield (repo_dir, push_args) for each `git push` in a shell command line."""
+    """Yield (repo_dir, push_args, env_assignments) for each `git push` in a shell command line."""
     for segment in re.split(r"&&|\|\||[;|\n]", command):
         try:
             words = shlex.split(segment)
         except ValueError:
             words = segment.split()
+        env = set()
         while words and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0]):
-            words = words[1:]  # env assignments
+            env.add(words.pop(0))  # env assignments on this segment only
         if not words:
             continue
         if words[0] == "cd" and len(words) > 1:
@@ -40,7 +42,7 @@ def pushes(command, cwd):
                 repo = str(Path(repo, os.path.expanduser(words[i + 1])))
             i += 2 if opt in GIT_OPTS_WITH_VALUE and "=" not in words[i] else 1
         if i < len(words) and words[i] == "push":
-            yield repo, words[i + 1:]
+            yield repo, words[i + 1:], env
 
 
 PUSH_OPTS_WITH_VALUE = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
@@ -76,10 +78,8 @@ def targets(repo, args):
 def main():
     data = json.load(sys.stdin)
     command = (data.get("tool_input") or {}).get("command", "")
-    if "AGENT_REVIEW_SKIP=1" in command:
-        return 0
-    for repo, args in pushes(command, data.get("cwd") or os.getcwd()):
-        if "--delete" in args or "-d" in args:
+    for repo, args, env in pushes(command, data.get("cwd") or os.getcwd()):
+        if "AGENT_REVIEW_SKIP=1" in env or "--delete" in args or "-d" in args:
             continue  # deleting a remote ref ships no code
         common = git(repo, "rev-parse", "--git-common-dir")
         if not common or not git(repo, "rev-parse", "HEAD"):

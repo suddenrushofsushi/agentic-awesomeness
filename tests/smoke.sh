@@ -20,8 +20,26 @@ gate "$T" "AGENT_REVIEW_SKIP=1 git push";      [ $? = 0 ] && ok "gate bypass wor
 "$AGENT" stamp -C "$T" >/dev/null 2>&1;        [ $? != 0 ] && ok "stamp refuses without --by/--note" || bad "stamp refuses without --by/--note"
 "$AGENT" stamp -C "$T/sub" --by claude --note smoke >/dev/null
 gate "$T" "git push";                          [ $? = 0 ] && ok "gate allows stamped HEAD"         || bad "gate allows stamped HEAD"
+git -C "$T" branch other
 git -C "$T" commit -q --allow-empty -m next
 gate "$T" "git push";                          [ $? = 2 ] && ok "new commit needs a new stamp"     || bad "new commit needs a new stamp"
+gate "$T" "git push origin other";             [ $? = 0 ] && ok "gate checks the named ref (stamped)" || bad "gate checks the named ref (stamped)"
+gate "$T" "git push -u origin HEAD:main";      [ $? = 2 ] && ok "gate checks refspec source"       || bad "gate checks refspec source"
+gate "$T" "git push origin other main";        [ $? = 2 ] && ok "gate checks every refspec"        || bad "gate checks every refspec"
+gate "$T" "git push origin :old";              [ $? = 0 ] && ok "gate allows :dst delete"          || bad "gate allows :dst delete"
+gate "$T" "git push --all origin";             [ $? = 2 ] && ok "gate blocks --all"                || bad "gate blocks --all"
+gate "$T" "git push origin nosuchref";         [ $? = 2 ] && ok "gate blocks unresolvable ref"     || bad "gate blocks unresolvable ref"
+"$AGENT" stamp -C "$T" --by someone --note x >/dev/null 2>&1; [ $? != 0 ] && ok "stamp refuses unknown --by" || bad "stamp refuses unknown --by"
+
+# review stamping rule, with a fake codex that prints canned findings
+FAKE="$T/fake-codex"; git -C "$T" checkout -q -b feat-fake
+printf '#!/bin/sh\necho "- [P1] fake blocking finding"\n' > "$FAKE"; chmod +x "$FAKE"
+CODEX_BIN="$FAKE" "$AGENT" review -C "$T" --base main >/dev/null 2>&1
+gate "$T" "git push";                          [ $? = 2 ] && ok "review with P1 does not stamp"    || bad "review with P1 does not stamp"
+printf '#!/bin/sh\necho "- [P2] fake minor finding"\n' > "$FAKE"
+CODEX_BIN="$FAKE" "$AGENT" review -C "$T" --base main >/dev/null 2>&1
+gate "$T" "git push";                          [ $? = 0 ] && ok "review with only P2 stamps"       || bad "review with only P2 stamps"
+git -C "$T" checkout -q main
 
 if [ "${1:-}" != "--offline" ]; then
   live() { out=$("$AGENT" "$@" 2>/dev/null); [[ "$out" == *"$want"* ]] && ok "live: $*" || bad "live: $* -> ${out:0:200}"; }
@@ -29,10 +47,10 @@ if [ "${1:-}" != "--offline" ]; then
   want=ok-local; live pi -C "$T" "Reply with exactly: ok-local"
   want=ok-or;    live pi -C "$T" -m openrouter/deepseek/deepseek-v4-pro "Reply with exactly: ok-or"
   if [[ " $* " == *" --review "* ]]; then
-    git -C "$T" checkout -q -b feat && printf 'def div(a, b):\n    return a / b\n' > "$T/m.py"
+    git -C "$T" checkout -q -b feat-live && printf 'def div(a, b):\n    return a / b\n' > "$T/m.py"
     git -C "$T" add m.py && git -C "$T" commit -q -m "add div"
-    "$AGENT" review -C "$T" --base main >/dev/null 2>&1
-    gate "$T" "git push"; [ $? = 0 ] && ok "live: Luna review stamps HEAD" || bad "live: Luna review stamps HEAD"
+    "$AGENT" review -C "$T" --base main 2>&1 | grep -q "\[P[01]\]" && want=2 || want=0
+    gate "$T" "git push"; [ $? = $want ] && ok "live: Luna review stamps unless P0/P1 (want $want)" || bad "live: Luna review stamp rule"
   fi
 fi
 exit $fail

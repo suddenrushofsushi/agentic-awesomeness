@@ -6,8 +6,8 @@ Claude Code (in the Claude Desktop Code tab) is the one place you work. From the
 
 | path | what it does |
 |---|---|
-| `bin/agent` | One wrapper: `agent codex`, `agent pi`, `agent review`, `agent stamp`. Read-only unless `--write`. Prints only the final answer; saves prompt, raw events, answer, and metadata under `~/.agent-runs/`. |
-| `hooks/push-gate.py` | Claude Code `PreToolUse` hook. Blocks Claude's `git push` unless HEAD has a review stamp. |
+| `bin/agent` | One wrapper: `agent codex`, `agent pi`, `agent review`, `agent stamp`. Read-only unless `--write`. Prints only the final answer; saves prompt, raw events, answer, and metadata in a unique folder under `~/.agent-runs/`. |
+| `hooks/push-gate.py` | Claude Code `PreToolUse` hook. Blocks Claude's `git push` unless every commit it ships has a review stamp. |
 | `skills/delegate` | Hand a task to Codex or pi in a folder Claude controls, review the result, land it. |
 | `skills/bakeoff` | Same prompt to many models, results side by side. |
 | `skills/blind-draft` | Codex drafts a design from the same brief without seeing Claude's; Claude compares the two. |
@@ -18,7 +18,7 @@ Claude Code (in the Claude Desktop Code tab) is the one place you work. From the
 agent codex  [-m MODEL] [-e EFFORT] [-C DIR] [--write] [--resume ID] PROMPT|-
 agent pi     [-m PROVIDER/ID] [-e THINKING] [-C DIR] [--write] [--resume ID] PROMPT|-
 agent review [-m MODEL] [-e EFFORT] [-C DIR] [--base REF | --uncommitted] [PROMPT]
-agent stamp  [-C DIR] --by claude --note TEXT
+agent stamp  [-C DIR] --by claude|craig --note TEXT
 ```
 
 ## Why CLIs and not MCP servers
@@ -42,7 +42,7 @@ Codex CLI 0.155 no longer ships `codex mcp-server`. Hermes Agent's MCP mode expo
 - **Codex** runs in its sandbox: `read-only`, or `workspace-write` with network on for `--write`.
 - **pi** read-only mode is a tool allowlist (`read,grep,find,ls,evaluate,mcp,mcpScript`). With `--write` pi has no path sandbox, so Claude checks the main tree for stray edits after each pi job.
 - **Cross-family review.** Claude-written code goes to Codex `gpt-6-luna`. Code written only by Codex or pi goes to Claude, who then runs `agent stamp --by claude`.
-- **Review stamps** live in `<git-common-dir>/agent-review/<sha>`. A new commit needs a new stamp. The gate only stops Claude Code; pushes from your own terminal are not touched. `AGENT_REVIEW_SKIP=1 git push` bypasses it.
+- **Review stamps** live in `<git-common-dir>/agent-review/<sha>`. `agent review` stamps HEAD only when the review has no `[P0]` or `[P1]` finding. An overruled P0/P1 is stamped with `agent stamp --by craig --note ...`. The gate checks every commit a push ships (HEAD, or each refspec source) and blocks `--all`, `--tags`, `--mirror`, and refs it cannot resolve. A new commit needs a new stamp. The gate only stops Claude Code; pushes from your own terminal are not touched. `AGENT_REVIEW_SKIP=1 git push` bypasses it.
 
 ## Install
 

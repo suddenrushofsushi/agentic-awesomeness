@@ -4,7 +4,7 @@ description: Use before any git push of code that Claude wrote (Fable, Opus, Son
 ---
 # luna-review
 
-The push gate (`hooks/push-gate.py` in agentic-awesomeness) blocks Claude's `git push` until HEAD has a review stamp. `agent review` writes the stamp after a completed Luna review of that exact HEAD.
+The push gate (`hooks/push-gate.py` in agentic-awesomeness) blocks Claude's `git push` until every commit it ships has a review stamp. `agent review` writes the stamp only when Luna finishes a review of that exact HEAD with no [P0] or [P1] finding.
 
 ## Who reviews what
 - Code written by Claude: Luna, through this skill.
@@ -18,6 +18,7 @@ The push gate (`hooks/push-gate.py` in agentic-awesomeness) blocks Claude's `git
    - Agree: fix it in a new commit.
    - Disagree: write a one-line reason. Claude decides P2 and P3. Claude never rejects a P0 or P1 alone: hold it for Craig.
 4. **Loop.** If you changed code, run `agent review` again, because the stamp is tied to HEAD. Max 3 rounds. Stop early when a round has no finding you accept.
+   - A round with an open P0 or P1 leaves HEAD unstamped. If Craig overrules it, stamp with his decision: `agent stamp -C <repo> --by craig --note "Craig overruled [P1] <finding>: <his reason>"`. Only after he says so in chat.
 5. **Report to Craig.** Fixed (one line each), disputed (finding and reason), P0/P1 held for his call, still open. Then wait.
 6. **Push on Craig's go only.** The gate passes when the final HEAD has a stamp. After the push, CodeRabbit takes over (the cpw skill handles PR and CI).
 

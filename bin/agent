@@ -4,12 +4,15 @@
   agent codex  [-m MODEL] [-e EFFORT] [-C DIR] [--write] [--resume ID] PROMPT|-
   agent pi     [-m PROVIDER/ID] [-e THINKING] [-C DIR] [--write] [--resume ID] PROMPT|-
   agent review [-m MODEL] [-e EFFORT] [-C DIR] [--base REF | --uncommitted] [PROMPT]
-  agent stamp  [-C DIR] --by claude --note TEXT     # Claude reviewed HEAD (Codex/pi-authored code only)
+  agent stamp  [-C DIR] --by claude|craig --note TEXT
+      claude: Claude reviewed HEAD (code written only by Codex/pi)
+      craig:  Craig overruled open P0/P1 findings on HEAD (only after he says so in chat)
 
 Read-only unless --write. Prints only the final answer on stdout; one summary line
-on stderr. Every run is saved under ~/.agent-runs/<time>-<agent>-<model>/.
+on stderr. Every run is saved under ~/.agent-runs/<time>-<pid>-<agent>-<model>/.
+A review stamps HEAD only when it finishes with no [P0]/[P1] finding.
 """
-import argparse, datetime, json, os, subprocess, sys, time
+import argparse, datetime, json, os, re, subprocess, sys, time
 from pathlib import Path
 
 CODEX = os.environ.get("CODEX_BIN", "/Applications/ChatGPT.app/Contents/Resources/codex")
@@ -32,8 +35,8 @@ def git(cwd, *args):
 
 def new_run(agent, model, prompt):
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    d = RUNS / f"{stamp}-{agent}-{(model or 'default').replace('/', '_')}"
-    d.mkdir(parents=True, exist_ok=True)
+    d = RUNS / f"{stamp}-{os.getpid()}-{agent}-{(model or 'default').replace('/', '_')}"
+    d.mkdir(parents=True)
     (d / "prompt.md").write_text(prompt)
     return d
 
@@ -161,11 +164,17 @@ def review(a, prompt):
     rc, secs = execute(cmd, a.cwd, run_dir, stdout_name="review.md")
     text = (run_dir / "review.md").read_text()
     meta = dict(agent="review", model=model, effort=effort, cwd=a.cwd, base=base, head=head, rc=rc, seconds=secs)
+    blocking = re.findall(r"\[P[01]\][^\n]*", text)
     if rc == 0 and head:
-        if git(a.cwd, "rev-parse", "HEAD") == head:  # code did not move while Luna read it
-            write_stamp(a.cwd, reviewer=model, run=str(run_dir), base=base)
-        else:
+        if git(a.cwd, "rev-parse", "HEAD") != head:
             meta["errors"] = ["HEAD moved during review; not stamped"]
+        elif blocking:
+            meta["errors"] = [f"not stamped: {len(blocking)} open P0/P1 finding(s)"]
+        else:
+            write_stamp(a.cwd, reviewer=model, run=str(run_dir), base=base)
+            meta["stamped"] = head
+    if meta.get("errors"):
+        print(f"[agent] {meta['errors'][0]}", file=sys.stderr)
     return finish(run_dir, meta, text)
 
 
@@ -191,9 +200,9 @@ def main():
     prompt = sys.stdin.read() if a.prompt == "-" else (a.prompt or "")
 
     if a.agent == "stamp":
-        if a.by != "claude" or not a.note:
-            sys.exit("[agent] stamp needs --by claude --note '<what you reviewed>'")
-        print(f"[agent] stamped {write_stamp(a.cwd, reviewer='claude', note=a.note)}")
+        if a.by not in ("claude", "craig") or not a.note:
+            sys.exit("[agent] stamp needs --by claude|craig --note '<what was reviewed or decided>'")
+        print(f"[agent] stamped {write_stamp(a.cwd, reviewer=a.by, note=a.note)}")
         return 0
     if a.agent == "review":
         return review(a, prompt)

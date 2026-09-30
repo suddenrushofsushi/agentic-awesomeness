@@ -29,8 +29,8 @@ Codex CLI 0.155 no longer ships `codex mcp-server`. Hermes Agent's MCP mode expo
 
 | job | harness | default model |
 |---|---|---|
-| delegated code work | `agent codex` | `gpt-6-sol` |
-| design back-and-forth, blind drafts | `agent codex` | `gpt-6-astra` high, `gpt-6-sol` as backup |
+| delegated code work | `agent codex` | `gpt-6.1-sol` |
+| design back-and-forth, blind drafts | `agent codex` | `gpt-6.1-sol` high |
 | pre-push review | `agent review` (`codex review`) | `gpt-6-luna` high |
 | local models | `agent pi` | oMLX `Qwen3.8-27B-oQ8e-mtp` |
 | open-weight models | `agent pi -m openrouter/<id>` | any OpenRouter model |
@@ -64,7 +64,7 @@ Add the gate to `hooks.PreToolUse` in `~/.claude/settings.json`:
 
 Then run `tests/smoke.sh` (add `--review` for one real Codex review).
 
-Environment overrides: `CODEX_BIN` (default: the binary inside `ChatGPT.app`), `AGENT_RUNS` (default `~/.agent-runs`).
+Environment overrides: `CODEX_BIN` (default: the ChatGPT app's `Contents/Resources/codex-cli/bin/codex`, then the older `Contents/Resources/codex`, then `codex` on PATH), `AGENT_RUNS` (default `~/.agent-runs`).
 
 pi on oMLX, in `~/.pi/agent/models.json`:
 
@@ -88,7 +88,7 @@ Use Claude Desktop scheduled tasks. They run on your Mac with your local MCP ser
 - `codex exec resume` takes no `-s` or `-C`. `agent` uses `-c sandbox_mode=...` and the working folder.
 - `codex review` writes findings to stdout and its transcript to stderr. `agent review` keeps them apart.
 - `codex review` rejects `--base` together with custom instructions. `agent review` names the base inside the prompt instead (`git diff <base>...HEAD`).
-- `/usr/local/bin/codex` from the ChatGPT app is a symlink. Codex looks for `codex-code-mode-host` next to the path it was started from, so shell tools fail closed unless you call the real binary or link the host too.
+- The ChatGPT app moves its Codex binary between releases. Since 2026-09-30 it lives at `Contents/Resources/codex-cli/bin/codex`, a launcher that follows symlinks, with `codex-code-mode-host` beside it. Older builds kept a bare `Contents/Resources/codex` that looked for the host next to the path it was started from, so a symlink made shell tools fail closed. After an app update, relink `/usr/local/bin/codex` if you use it.
 - "Selected model is at capacity" is an OpenAI `server_overloaded` error. It is transient: retry, or use the backup model.
 - oMLX defaults to port 8000, which docker compose web stacks also like. Move it (`server.port` in `~/.omlx/settings.json`).
 

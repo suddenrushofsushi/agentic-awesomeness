@@ -9,7 +9,7 @@ Write one prompt to a file. Every model gets exactly this prompt. Never tailor i
 
 ## 2. Models
 Craig's list. If he gives none, use:
-- `agent codex` (gpt-6-sol)
+- `agent codex` (gpt-6.1-sol)
 - `agent pi` (oMLX Qwen3.8-27B)
 - `agent pi -m openrouter/deepseek/deepseek-v4-pro`
 - one Claude subagent (Agent tool, `model: sonnet`)

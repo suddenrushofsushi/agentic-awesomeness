@@ -8,8 +8,8 @@ Claude orchestrates. Codex or pi works only inside the folder Claude gives it. T
 
 ## 1. Pick the worker
 - Craig named one: use it.
-- Code change: `agent codex` (default `gpt-6-sol`). Hard or long task: add `-e high`.
-- Design or architecture opinion: `-m gpt-6-astra -e high`, `gpt-6-sol` as backup. For a full design, use the blind-draft skill.
+- Code change: `agent codex` (default `gpt-6.1-sol`). Hard or long task: add `-e high`.
+- Design or architecture opinion: `-m gpt-6.1-sol -e high`. For a full design, use the blind-draft skill.
 - Local, open-weight, or cheap: `agent pi` (default oMLX Qwen3.8-27B) or `agent pi -m openrouter/<model-id>`.
 - GPT models go through codex. Every other non-Claude model goes through pi. Claude models: a Claude subagent (Agent tool with `model`), not `agent`.
 

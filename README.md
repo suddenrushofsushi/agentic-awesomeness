@@ -31,7 +31,7 @@ Codex CLI 0.155 no longer ships `codex mcp-server`. Hermes Agent's MCP mode expo
 |---|---|---|
 | delegated code work | `agent codex` | `gpt-6.1-sol` |
 | design back-and-forth, blind drafts | `agent codex` | `gpt-6.1-sol` high |
-| pre-push review | `agent review` (`codex review`) | `gpt-6-luna` high |
+| pre-push review | `agent review` (`codex review`) | `gpt-6.1-sol` high (was `gpt-6-luna`; it missed too much on complex PRs) |
 | local models | `agent pi` | oMLX `Qwen3.8-27B-oQ8e-mtp` |
 | open-weight models | `agent pi -m openrouter/<id>` | any OpenRouter model |
 | Claude models | Claude Code subagents | per call |
@@ -41,7 +41,7 @@ Codex CLI 0.155 no longer ships `codex mcp-server`. Hermes Agent's MCP mode expo
 - **Claude owns git.** Claude creates worktrees and branches, commits, and pushes. Workers only read and edit inside the folder they get. `agent` prepends these rules to every task.
 - **Codex** runs in its sandbox: `read-only`, or `workspace-write` with network on for `--write`.
 - **pi** read-only mode is a tool allowlist (`read,grep,find,ls,evaluate`, no MCP tools). With `--write` pi has no path sandbox, so Claude checks the main tree for stray edits after each pi job.
-- **Cross-family review.** Claude-written code goes to Codex `gpt-6-luna` before the first push. Code written only by Codex or pi goes to Claude, who then runs `agent stamp --by claude`.
+- **Cross-family review.** Claude-written code goes to a Codex `gpt-6.1-sol` review before the first push. The gate is still called Luna, after its first model. Code written only by Codex or pi goes to Claude, who then runs `agent stamp --by claude`.
 - **After the first push** the PR reviewer (CodeRabbit here) re-reviews every push. Targeted fixes for a failing check or a verified finding get `agent stamp --by claude --note "cpw fix: ..."`. A Luna delta review (`agent review --base origin/<branch>`) runs only when a fix adds logic beyond the finding or changes a test's assertions.
 - **Every Luna review** also applies the `ponytail-review` lens: over-engineering comes back as `[P3]`, which never blocks. The review prompt tells Luna to skip Bugbot. In Codex, Bugbot is only a same-model subagent, and `codex review` has no subagent tools.
 - **Review stamps** live in `<git-common-dir>/agent-review/<sha>`. `agent review` stamps HEAD only when the review has no `[P0]` or `[P1]` finding. An overruled P0/P1 is stamped with `agent stamp --by craig --note ...`. The gate checks the tip of each pushed ref (HEAD, or each refspec source). A stamp covers the whole reviewed diff from the base to that commit, so commits below it need no stamp of their own. The gate blocks `--all`, `--tags`, `--mirror`, and refs it cannot resolve. A new commit needs a new stamp. The gate only stops Claude Code; pushes from your own terminal are not touched. `AGENT_REVIEW_SKIP=1 git push` bypasses it; the prefix must sit on the push itself.

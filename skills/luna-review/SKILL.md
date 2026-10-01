@@ -1,8 +1,10 @@
 ---
 name: luna-review
-description: Use before any git push of code that Claude wrote (Fable, Opus, Sonnet, or a Claude subagent), and whenever the push gate blocks a push. Runs a Codex gpt-6-luna high-effort review of the branch, fixes or disputes each finding, loops up to 3 rounds, then waits for Craig's go. Triggers - "luna review", "review before push", "Push blocked" from the gate.
+description: Use before any git push of code that Claude wrote (Fable, Opus, Sonnet, or a Claude subagent), and whenever the push gate blocks a push. Runs a Codex gpt-6.1-sol high-effort review of the branch, fixes or disputes each finding, loops up to 3 rounds, then waits for Craig's go. Triggers - "luna review", "review before push", "Push blocked" from the gate.
 ---
 # luna-review
+
+"Luna" is the name of this gate. Since 2026-10-01 the reviewer model is `gpt-6.1-sol` at high effort, because `gpt-6-luna` missed too much on complex PRs.
 
 The push gate (`hooks/push-gate.py` in agentic-awesomeness) blocks Claude's `git push` until the tip of each pushed ref has a review stamp. A stamp covers the whole reviewed diff from the base to that commit. `agent review` writes the stamp only when Luna finishes a review of that exact HEAD with no [P0] or [P1] finding.
 

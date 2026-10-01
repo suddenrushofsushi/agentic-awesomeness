@@ -20,7 +20,7 @@ CODEX_PATHS = ("/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex
                "/Applications/ChatGPT.app/Contents/Resources/codex")  # older app builds
 CODEX = os.environ.get("CODEX_BIN") or next((p for p in CODEX_PATHS if os.path.exists(p)), "codex")
 RUNS = Path(os.environ.get("AGENT_RUNS", "~/.agent-runs")).expanduser()
-CODEX_MODEL, REVIEW_MODEL, REVIEW_EFFORT = "gpt-6.1-sol", "gpt-6-luna", "high"
+CODEX_MODEL, REVIEW_MODEL, REVIEW_EFFORT = "gpt-6.1-sol", "gpt-6.1-sol", "high"  # review was gpt-6-luna until 2026-10-01
 PI_READ_TOOLS = "read,grep,find,ls,evaluate"  # no mcp/mcpScript: they reach MCP tools that write
 RULES = """You are a delegated worker. Claude Code owns this task and reviews your work.
 - Work only inside {cwd}.

@@ -40,7 +40,7 @@ Write it to a file and pass it with `-`. Include: goal, relevant files and conte
 ## 6. Land
 - Accept: Claude commits on the worktree branch.
 - Code written only by Codex or pi, reviewed by Claude: `agent stamp -C <worktree> --by claude --note "<what you checked>"`.
-- Claude also wrote code on the branch: run the luna-review skill instead.
+- Claude also wrote code on the branch: run the review-gate skill instead.
 - Push only on Craig's go. His go runs the cpw skill from its push step. After merge or drop: `git worktree remove <worktree>`.
 
 ## 7. Record

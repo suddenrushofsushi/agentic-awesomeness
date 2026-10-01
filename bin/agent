@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""agent: run Codex or pi headless for Claude Code, and run Luna pre-push reviews.
+"""agent: run Codex or pi headless for Claude Code, and run pre-push reviews.
 
   agent codex  [-m MODEL] [-e EFFORT] [-C DIR] [--write] [--resume ID] PROMPT|-
   agent pi     [-m PROVIDER/ID] [-e THINKING] [-C DIR] [--write] [--resume ID] PROMPT|-
@@ -20,7 +20,7 @@ CODEX_PATHS = ("/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex
                "/Applications/ChatGPT.app/Contents/Resources/codex")  # older app builds
 CODEX = os.environ.get("CODEX_BIN") or next((p for p in CODEX_PATHS if os.path.exists(p)), "codex")
 RUNS = Path(os.environ.get("AGENT_RUNS", "~/.agent-runs")).expanduser()
-CODEX_MODEL, REVIEW_MODEL, REVIEW_EFFORT = "gpt-6.1-sol", "gpt-6.1-sol", "high"  # review was gpt-6-luna until 2026-10-01
+CODEX_MODEL, REVIEW_MODEL, REVIEW_EFFORT = "gpt-6.1-sol", "gpt-6.1-sol", "high"
 PI_READ_TOOLS = "read,grep,find,ls,evaluate"  # no mcp/mcpScript: they reach MCP tools that write
 RULES = """You are a delegated worker. Claude Code owns this task and reviews your work.
 - Work only inside {cwd}.

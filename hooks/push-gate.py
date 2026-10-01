@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Claude Code PreToolUse hook (matcher: Bash). Blocks `git push` unless the tip of each
-pushed ref (HEAD, or each refspec's source) has a review stamp from `agent review` (Luna)
+pushed ref (HEAD, or each refspec's source) has a review stamp from `agent review`
 or `agent stamp`. A stamp covers the whole reviewed diff from the base to that commit, so
 commits below a stamped tip need no stamp of their own. Pushes it cannot resolve
 (--all, --tags, --mirror, bad refs) are blocked. Exit 2 = block.
@@ -128,7 +128,7 @@ def main(raw):
             [s[:10] for s in shas if not (Path(repo, common).resolve() / "agent-review" / s).exists()]
         if missing:
             print(f"Push blocked in {repo}: no review stamp for {', '.join(missing)}. "
-                  "Run the luna-review skill (agent review) first. For Codex/pi-only code you reviewed, or a targeted "
+                  "Run the review-gate skill (agent review) first. For Codex/pi-only code you reviewed, or a targeted "
                   "fix after the first push, use `agent stamp --by claude --note ...`. Bypass only if Craig says so: AGENT_REVIEW_SKIP=1.",
                   file=sys.stderr)
             return 2

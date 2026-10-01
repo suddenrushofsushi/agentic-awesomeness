@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Smoke test. Offline: push gate + stamp. Live (skip with --offline): one tiny prompt per agent.
-#   tests/smoke.sh [--offline] [--review]    # --review also runs one real Luna review (slow)
+#   tests/smoke.sh [--offline] [--review]    # --review also runs one real Codex review (slow)
 set -u
 HERE="$(cd "$(dirname "$0")/.." && pwd)"; AGENT="$HERE/bin/agent"; GATE="$HERE/hooks/push-gate.py"
 fail=0; ok() { echo "ok   $1"; }; bad() { echo "FAIL $1"; fail=1; }
@@ -66,7 +66,7 @@ if [ "${1:-}" != "--offline" ]; then
     git -C "$T" checkout -q -b feat-live && printf 'def div(a, b):\n    return a / b\n' > "$T/m.py"
     git -C "$T" add m.py && git -C "$T" commit -q -m "add div"
     "$AGENT" review -C "$T" --base main 2>&1 | grep -q "\[P[01]\]" && want=2 || want=0
-    gate "$T" "git push"; [ $? = $want ] && ok "live: Luna review stamps unless P0/P1 (want $want)" || bad "live: Luna review stamp rule"
+    gate "$T" "git push"; [ $? = $want ] && ok "live: review stamps unless P0/P1 (want $want)" || bad "live: review stamp rule"
   fi
 fi
 exit $fail

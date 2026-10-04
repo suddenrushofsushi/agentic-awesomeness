@@ -11,16 +11,20 @@
 Read-only unless --write. Prints only the final answer on stdout; one summary line
 on stderr. Every run is saved under ~/.agent-runs/<time>-<pid>-<agent>-<model>/.
 A review stamps HEAD only when it finishes with no [P0]/[P1] finding. Every review also applies the
-ponytail-review lens (over-engineering as [P3], which never blocks).
+ponytail-review lens (over-engineering as [P3], which never blocks). Diffs of COMPLEX_LOC+ lines or
+COMPLEX_FILES+ files also get COMPLEX_REVIEW_MODEL in parallel; its P0/P1 block too, its failure does not.
 """
-import argparse, datetime, json, os, re, subprocess, sys, time
+import argparse, datetime, json, os, re, subprocess, sys, threading, time
 from pathlib import Path
 
 CODEX_PATHS = ("/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",  # ChatGPT app since 2026-09-30
                "/Applications/ChatGPT.app/Contents/Resources/codex")  # older app builds
 CODEX = os.environ.get("CODEX_BIN") or next((p for p in CODEX_PATHS if os.path.exists(p)), "codex")
 RUNS = Path(os.environ.get("AGENT_RUNS", "~/.agent-runs")).expanduser()
+PI = os.environ.get("PI_BIN", "pi")
 CODEX_MODEL, REVIEW_MODEL, REVIEW_EFFORT = "gpt-6.1-sol", "gpt-6.1-sol", "high"
+# Large diffs also get Kimi K3 (best recall on the 2026-10-02 bakeoff). Fails open: Sol alone still stamps.
+COMPLEX_REVIEW_MODEL, COMPLEX_LOC, COMPLEX_FILES, COMPLEX_TIMEOUT = "openrouter/moonshotai/kimi-k3", 800, 15, 900
 PI_READ_TOOLS = "read,grep,find,ls,evaluate"  # no mcp/mcpScript: they reach MCP tools that write
 RULES = """You are a delegated worker. Claude Code owns this task and reviews your work.
 - Work only inside {cwd}.
@@ -48,10 +52,14 @@ def new_run(agent, model, prompt):
     return d
 
 
-def execute(cmd, cwd, run_dir, stdout_name="events.jsonl"):
+def execute(cmd, cwd, run_dir, stdout_name="events.jsonl", timeout=None):
     t = time.time()
     with open(run_dir / stdout_name, "w") as out, open(run_dir / "stderr.log", "w") as err:
-        rc = subprocess.run(cmd, cwd=cwd, stdin=subprocess.DEVNULL, stdout=out, stderr=err).returncode
+        try:
+            rc = subprocess.run(cmd, cwd=cwd, stdin=subprocess.DEVNULL, stdout=out, stderr=err,
+                                timeout=timeout).returncode
+        except subprocess.TimeoutExpired:
+            rc = 124
     return rc, round(time.time() - t)
 
 
@@ -103,7 +111,7 @@ def codex(a, prompt):
     return finish(run_dir, meta, answer_file.read_text() if answer_file.exists() else "")
 
 
-def pi(a, prompt):
+def run_pi(a, prompt, timeout=None):
     opts = ["-p", "--mode", "json", "--append-system-prompt", rules(a)]
     if a.model and "/" in a.model:
         provider, mid = a.model.split("/", 1)
@@ -117,7 +125,7 @@ def pi(a, prompt):
     if a.resume:
         opts += ["--session", a.resume]
     run_dir = new_run("pi", a.model, prompt)
-    rc, secs = execute(["pi", *opts, prompt], a.cwd, run_dir)
+    rc, secs = execute([PI, *opts, prompt], a.cwd, run_dir, timeout=timeout)
     meta = dict(agent="pi", model=a.model or "default", effort=a.effort, cwd=a.cwd, write=a.write, rc=rc,
                 seconds=secs, session=a.resume, errors=[])
     answer = ""
@@ -125,14 +133,20 @@ def pi(a, prompt):
         if e.get("type") == "session":
             meta["session"] = e.get("id")
         elif e.get("type") == "agent_end":
-            last = next((m for m in reversed(e.get("messages", [])) if m.get("role") == "assistant"), {})
+            turns = [m for m in e.get("messages", []) if m.get("role") == "assistant"]
+            last = turns[-1] if turns else {}
             answer = "\n".join(c.get("text", "") for c in last.get("content", []) if c.get("type") == "text")
             meta["model"] = f"{last.get('provider')}/{last.get('model')}" if last.get("model") else meta["model"]
             meta["usage"] = last.get("usage")
-            meta["cost"] = round(((last.get("usage") or {}).get("cost") or {}).get("total", 0), 4) or None
+            # every turn bills, not just the last
+            meta["cost"] = round(sum(((m.get("usage") or {}).get("cost") or {}).get("total", 0) for m in turns), 4) or None
             if last.get("errorMessage"):
                 meta["errors"].append(last["errorMessage"])
-    return finish(run_dir, meta, answer)
+    return run_dir, meta, answer
+
+
+def pi(a, prompt):
+    return finish(*run_pi(a, prompt))
 
 
 def default_base(cwd):
@@ -157,6 +171,13 @@ def write_stamp(cwd, **info):
     return head
 
 
+def diff_size(cwd, rng):
+    """(files, insertions + deletions) for the diff under review. Naive: tests, migrations, comments all count."""
+    stat = git(cwd, "diff", "--shortstat", *rng) or ""
+    n = lambda word: int(m[1]) if (m := re.search(rf"(\d+) {word}", stat)) else 0
+    return n("file"), n("insertion") + n("deletion")
+
+
 def review(a, prompt):
     model, effort = a.model or REVIEW_MODEL, a.effort or REVIEW_EFFORT
     head = None if a.uncommitted else stamp_path(a.cwd)[0]
@@ -167,11 +188,36 @@ def review(a, prompt):
     target = ("Review the uncommitted changes in this repo (staged, unstaged, and untracked)." if a.uncommitted
               else f"Review the changes on the current branch against {base} (git diff {base}...HEAD).")
     task = f"{target}\n{REVIEW_LENS}" + (f"\n\nAdditional instructions:\n{prompt}" if prompt else "")
+    rng = ["HEAD"] if a.uncommitted else [f"{base}...HEAD"]  # ponytail: uncommitted size ignores untracked files
+    files, loc = diff_size(a.cwd, rng)
+    second, result = None, {}
+    if loc >= COMPLEX_LOC or files >= COMPLEX_FILES:
+        k = argparse.Namespace(**{**vars(a), "model": COMPLEX_REVIEW_MODEL, "effort": "high", "write": False,
+                                  "resume": None})
+        # pi has no shell tool, so the diff rides in the prompt; capped under macOS ARG_MAX
+        k_task = (f"{task}\n\nOutput only findings, one per line: `[P0-P3] path:line: problem. Fix: one line.` "
+                  f"If none, write `No findings`.\n\nThe diff:\n```diff\n{(git(a.cwd, 'diff', *rng) or '')[:600_000]}\n```")
+        second = threading.Thread(target=lambda: result.update(r=run_pi(k, k_task, timeout=COMPLEX_TIMEOUT)))
+        second.start()
     cmd = [CODEX, "review", "-c", f'model="{model}"', "-c", f'model_reasoning_effort="{effort}"', task]
     run_dir = new_run("review", model, task)
     rc, secs = execute(cmd, a.cwd, run_dir, stdout_name="review.md")
     text = (run_dir / "review.md").read_text()
-    meta = dict(agent="review", model=model, effort=effort, cwd=a.cwd, base=base, head=head, rc=rc, seconds=secs)
+    meta = dict(agent="review", model=model, effort=effort, cwd=a.cwd, base=base, head=head, rc=rc, seconds=secs,
+                files=files, loc=loc)
+    if second:
+        second.join()
+        k_dir, k_meta, k_text = result.get("r", (None, {"rc": "crashed"}, ""))
+        if k_dir:
+            (k_dir / "answer.md").write_text(k_text)
+            (k_dir / "meta.json").write_text(json.dumps(k_meta, indent=2))
+        meta["second"] = dict(model=COMPLEX_REVIEW_MODEL, rc=k_meta.get("rc"), cost=k_meta.get("cost"), run=str(k_dir))
+        if k_meta.get("rc") == 0 and k_text.strip():
+            model = f"{model}+{COMPLEX_REVIEW_MODEL}"
+            text += f"\n\n## Second reviewer: {COMPLEX_REVIEW_MODEL}\n\n{k_text.strip()}\n"
+        else:
+            print(f"[agent] warning: second reviewer {COMPLEX_REVIEW_MODEL} failed (rc={k_meta.get('rc')}); "
+                  f"stamping on {model} alone", file=sys.stderr)
     blocking = re.findall(r"\[P[01]\][^\n]*", text)
     if rc == 0 and head:
         if git(a.cwd, "rev-parse", "HEAD") != head:

@@ -55,6 +55,22 @@ printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "$0.args"\necho ok\n' > "$FAKE"
 CODEX_BIN="$FAKE" "$AGENT" review -C "$T" --base main "extra check" >/dev/null 2>&1
 ! grep -qx -- '--base' "$FAKE.args" && grep -q 'main...HEAD' "$FAKE.args" && grep -q 'ponytail-review' "$FAKE.args" && grep -q 'extra check' "$FAKE.args" \
   && ok "review puts base, lens, and extra prompt in one prompt (no --base flag)" || bad "review prompt form: $(tr '\n' ' ' < "$FAKE.args" | cut -c1-200)"
+
+# complex diff (15 files) adds the second reviewer: its P1 blocks, its failure does not
+git -C "$T" checkout -q -b feat-big main
+for i in $(seq 15); do echo "x = $i" > "$T/f$i.py"; done
+git -C "$T" add -- 'f*.py' &&git -C "$T" commit -q -m big
+FAKEPI="$T/fake-pi"; printf '#!/bin/sh\necho "- [P2] fake minor finding"\n' > "$FAKE"
+cat > "$FAKEPI" <<'EOF'
+#!/bin/sh
+echo '{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"text","text":"- [P1] fake kimi finding"}]}]}'
+EOF
+chmod +x "$FAKEPI"
+CODEX_BIN="$FAKE" PI_BIN="$FAKEPI" "$AGENT" review -C "$T" --base main >/dev/null 2>&1
+gate "$T" "git push";                          [ $? = 2 ] && ok "complex diff: second reviewer P1 blocks" || bad "complex diff: second reviewer P1 blocks"
+printf '#!/bin/sh\nexit 1\n' > "$FAKEPI"
+CODEX_BIN="$FAKE" PI_BIN="$FAKEPI" "$AGENT" review -C "$T" --base main >/dev/null 2>&1
+gate "$T" "git push";                          [ $? = 0 ] && ok "complex diff: second reviewer failure fails open" || bad "complex diff: second reviewer failure fails open"
 git -C "$T" checkout -q main
 
 if [ "${1:-}" != "--offline" ]; then

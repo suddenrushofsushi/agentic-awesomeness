@@ -8,6 +8,8 @@ The push gate (`hooks/push-gate.py` in agentic-awesomeness) blocks Claude's `git
 
 The reviewer model is `REVIEW_MODEL` in `bin/agent`. Swap models there, not here.
 
+Complex diffs (`COMPLEX_LOC`+ lines changed or `COMPLEX_FILES`+ files, naive count) also get `COMPLEX_REVIEW_MODEL` (Kimi K3) in parallel. Its findings come after Sol's under `## Second reviewer`. Its [P0]/[P1] block the stamp like Sol's. If it fails, the review warns and stamps on Sol alone. When both reviewers report the same defect, fix or dispute it once.
+
 ## Who reviews what
 - Code written by Claude: the Codex reviewer, through this skill.
 - Code written only by Codex or pi: Claude reviews it (delegate skill), then `agent stamp --by claude`.

@@ -32,6 +32,7 @@ Codex CLI 0.155 no longer ships `codex mcp-server`. Hermes Agent's MCP mode expo
 | delegated code work | `agent codex` | `gpt-6.1-sol` |
 | design back-and-forth, blind drafts | `agent codex` | `gpt-6.1-sol` high |
 | pre-push review | `agent review` (`codex review`) | `gpt-6.1-sol` high. Set by `REVIEW_MODEL` in `bin/agent`. |
+| second reviewer, complex diffs (800+ lines or 15+ files) | `agent review` (pi, in parallel) | `openrouter/moonshotai/kimi-k3` high. Set by `COMPLEX_*` in `bin/agent`. Fails open. |
 | local models | `agent pi` | oMLX `Qwen3.8-27B-oQ8e-mtp` |
 | open-weight models | `agent pi -m openrouter/<id>` | any OpenRouter model |
 | Claude models | Claude Code subagents | per call |

@@ -141,9 +141,10 @@ def run_pi(a, prompt, timeout=None):
             meta["usage"] = last.get("usage")
             # every turn bills, not just the last
             meta["cost"] = round(sum(((m.get("usage") or {}).get("cost") or {}).get("total", 0) for m in turns), 4) or None
-            # pi can exit 0 after a terminal API error; the partial text is not an answer
-            if last.get("errorMessage") or last.get("stopReason") in ("error", "aborted"):
-                meta["errors"].append(last.get("errorMessage") or f"stopReason={last['stopReason']}")
+            # pi can exit 0 after a terminal API error; the partial text is not an answer.
+            # Assign, not append: only the last agent_end counts, so a retried-then-recovered run passes.
+            failed = last.get("errorMessage") or last.get("stopReason") in ("error", "aborted")
+            meta["errors"] = [last.get("errorMessage") or f"stopReason={last.get('stopReason')}"] if failed else []
     return run_dir, meta, answer
 
 
@@ -223,8 +224,10 @@ def review(a, prompt):
             print(f"[agent] warning: second reviewer {COMPLEX_REVIEW_MODEL} failed (rc={k_meta.get('rc')}); "
                   f"stamping on {model} alone", file=sys.stderr)
     # fail closed: any [P0]/[P1] blocks, whatever the finding format (bullet, numbered, bold, JSON).
-    # Only a tag quoted as inline code (`[P1]`) inside another finding's prose is exempt.
-    blocking = [l for l in text.splitlines() if re.search(r"(?<!`)\[P[01]\]|\[P[01]\](?!`)", l)]
+    # Only an inline-code `[P1]` inside prose is exempt; a quoted tag that leads its line is a finding.
+    lead = r"^[^\w\n]*(?:\d+[.)][^\w\n]*)?\[P[01]\]"
+    bare = r"(?<!`)\[P[01]\]|\[P[01]\](?!`)"
+    blocking = [l for l in text.splitlines() if re.search(lead, l) or re.search(bare, l)]
     if rc == 0 and head:
         if git(a.cwd, "rev-parse", "HEAD") != head:
             meta["errors"] = ["HEAD moved during review; not stamped"]

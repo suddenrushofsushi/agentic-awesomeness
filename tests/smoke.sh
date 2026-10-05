@@ -56,7 +56,7 @@ unstamp
 printf '#!/bin/sh\necho "- [P2] fake finding\n  A partial \\`[P1]\\` would block here."\n' > "$FAKE"
 CODEX_BIN="$FAKE" "$AGENT" review -C "$T" --base main >/dev/null 2>&1
 gate "$T" "git push";                          [ $? = 0 ] && ok "[P1] quoted in a P2's prose stamps" || bad "[P1] quoted in a P2's prose stamps"
-for f in '1. [P1] numbered' '**[P1] bold**' '{"title": "[P0] json"}' '### [P1] heading'; do
+for f in '1. [P1] numbered' '**[P1] bold**' '{"title": "[P0] json"}' '### [P1] heading' '- `[P1]` quoted tag'; do
   unstamp; printf '#!/bin/sh\ncat <<"X"\n%s\nX\n' "$f" > "$FAKE"
   CODEX_BIN="$FAKE" "$AGENT" review -C "$T" --base main >/dev/null 2>&1
   gate "$T" "git push"; [ $? = 2 ] && ok "blocks format: $f" || bad "blocks format: $f"
@@ -88,6 +88,14 @@ echo '{"type":"agent_end","messages":[{"role":"assistant","stopReason":"error","
 EOF2
 CODEX_BIN="$FAKE" PI_BIN="$FAKEPI" "$AGENT" review -C "$T" --base main >/dev/null 2>&1
 gate "$T" "git push";                          [ $? = 0 ] && ok "complex diff: second reviewer API error (rc 0) fails open" || bad "complex diff: second reviewer API error (rc 0) fails open"
+unstamp
+cat > "$FAKEPI" <<'EOF2'
+#!/bin/sh
+echo '{"type":"agent_end","messages":[{"role":"assistant","stopReason":"error","errorMessage":"overloaded","content":[]}]}'
+echo '{"type":"agent_end","messages":[{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"- [P1] kimi after retry"}]}]}'
+EOF2
+CODEX_BIN="$FAKE" PI_BIN="$FAKEPI" "$AGENT" review -C "$T" --base main >/dev/null 2>&1
+gate "$T" "git push";                          [ $? = 2 ] && ok "complex diff: second reviewer recovered after retry still blocks" || bad "complex diff: second reviewer recovered after retry still blocks"
 git -C "$T" checkout -q main
 
 if [ "${1:-}" != "--offline" ]; then

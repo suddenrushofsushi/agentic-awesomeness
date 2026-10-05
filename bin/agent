@@ -25,6 +25,7 @@ PI = os.environ.get("PI_BIN", "pi")
 CODEX_MODEL, REVIEW_MODEL, REVIEW_EFFORT = "gpt-6.1-sol", "gpt-6.1-sol", "high"
 # Large diffs also get Kimi K3 (best recall on the 2026-10-02 bakeoff). Fails open: Sol alone still stamps.
 COMPLEX_REVIEW_MODEL, COMPLEX_LOC, COMPLEX_FILES, COMPLEX_TIMEOUT = "openrouter/moonshotai/kimi-k3", 800, 15, 900
+DIFF_ARG_BYTES = 600_000  # second reviewer's diff, inlined in pi's argv
 PI_READ_TOOLS = "read,grep,find,ls,evaluate"  # no mcp/mcpScript: they reach MCP tools that write
 RULES = """You are a delegated worker. Claude Code owns this task and reviews your work.
 - Work only inside {cwd}.
@@ -140,8 +141,9 @@ def run_pi(a, prompt, timeout=None):
             meta["usage"] = last.get("usage")
             # every turn bills, not just the last
             meta["cost"] = round(sum(((m.get("usage") or {}).get("cost") or {}).get("total", 0) for m in turns), 4) or None
-            if last.get("errorMessage"):
-                meta["errors"].append(last["errorMessage"])
+            # pi can exit 0 after a terminal API error; the partial text is not an answer
+            if last.get("errorMessage") or last.get("stopReason") in ("error", "aborted"):
+                meta["errors"].append(last.get("errorMessage") or f"stopReason={last['stopReason']}")
     return run_dir, meta, answer
 
 
@@ -194,9 +196,11 @@ def review(a, prompt):
     if loc >= COMPLEX_LOC or files >= COMPLEX_FILES:
         k = argparse.Namespace(**{**vars(a), "model": COMPLEX_REVIEW_MODEL, "effort": "high", "write": False,
                                   "resume": None})
-        # pi has no shell tool, so the diff rides in the prompt; capped under macOS ARG_MAX
+        # pi has no shell tool, so the diff rides in the prompt. ARG_MAX counts bytes, not characters:
+        # cap the UTF-8 encoding, well under macOS's 1 MB with room for the other args and env
+        diff = (git(a.cwd, 'diff', *rng) or '').encode()[:DIFF_ARG_BYTES].decode(errors="ignore")
         k_task = (f"{task}\n\nOutput only findings, one per line: `[P0-P3] path:line: problem. Fix: one line.` "
-                  f"If none, write `No findings`.\n\nThe diff:\n```diff\n{(git(a.cwd, 'diff', *rng) or '')[:600_000]}\n```")
+                  f"If none, write `No findings`.\n\nThe diff:\n```diff\n{diff}\n```")
         second = threading.Thread(target=lambda: result.update(r=run_pi(k, k_task, timeout=COMPLEX_TIMEOUT)))
         second.start()
     cmd = [CODEX, "review", "-c", f'model="{model}"', "-c", f'model_reasoning_effort="{effort}"', task]
@@ -212,13 +216,14 @@ def review(a, prompt):
             (k_dir / "answer.md").write_text(k_text)
             (k_dir / "meta.json").write_text(json.dumps(k_meta, indent=2))
         meta["second"] = dict(model=COMPLEX_REVIEW_MODEL, rc=k_meta.get("rc"), cost=k_meta.get("cost"), run=str(k_dir))
-        if k_meta.get("rc") == 0 and k_text.strip():
+        if k_meta.get("rc") == 0 and not k_meta.get("errors") and k_text.strip():
             model = f"{model}+{COMPLEX_REVIEW_MODEL}"
             text += f"\n\n## Second reviewer: {COMPLEX_REVIEW_MODEL}\n\n{k_text.strip()}\n"
         else:
             print(f"[agent] warning: second reviewer {COMPLEX_REVIEW_MODEL} failed (rc={k_meta.get('rc')}); "
                   f"stamping on {model} alone", file=sys.stderr)
-    blocking = re.findall(r"\[P[01]\][^\n]*", text)
+    # a finding's own tag only, at line start; "[P1]" quoted inside a P2's prose does not block
+    blocking = re.findall(r"^[ \t]*(?:[-*][ \t]*)?\[P[01]\][^\n]*", text, re.M)
     if rc == 0 and head:
         if git(a.cwd, "rev-parse", "HEAD") != head:
             meta["errors"] = ["HEAD moved during review; not stamped"]

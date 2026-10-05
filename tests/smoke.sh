@@ -6,6 +6,7 @@ HERE="$(cd "$(dirname "$0")/.." && pwd)"; AGENT="$HERE/bin/agent"; GATE="$HERE/h
 fail=0; ok() { echo "ok   $1"; }; bad() { echo "FAIL $1"; fail=1; }
 gate() { python3 -c 'import json,sys; print(json.dumps({"cwd":sys.argv[1],"tool_input":{"command":sys.argv[2]}}))' "$1" "$2" | "$GATE" 2>/dev/null; }
 
+unstamp() { rm -f "$T/.git/agent-review/$(git -C "$T" rev-parse HEAD)"; }  # so a test sees only its own review
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 git -C "$T" init -q -b main && git -C "$T" commit -q --allow-empty -m init
 mkdir -p "$T/sub"
@@ -51,6 +52,10 @@ gate "$T" "git push";                          [ $? = 2 ] && ok "review with P1 
 printf '#!/bin/sh\necho "- [P2] fake minor finding"\n' > "$FAKE"
 CODEX_BIN="$FAKE" "$AGENT" review -C "$T" --base main >/dev/null 2>&1
 gate "$T" "git push";                          [ $? = 0 ] && ok "review with only P2 stamps"       || bad "review with only P2 stamps"
+unstamp
+printf '#!/bin/sh\necho "- [P2] fake finding\n  A partial \\`[P1]\\` would block here."\n' > "$FAKE"
+CODEX_BIN="$FAKE" "$AGENT" review -C "$T" --base main >/dev/null 2>&1
+gate "$T" "git push";                          [ $? = 0 ] && ok "[P1] quoted in a P2's prose stamps" || bad "[P1] quoted in a P2's prose stamps"
 printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "$0.args"\necho ok\n' > "$FAKE"
 CODEX_BIN="$FAKE" "$AGENT" review -C "$T" --base main "extra check" >/dev/null 2>&1
 ! grep -qx -- '--base' "$FAKE.args" && grep -q 'main...HEAD' "$FAKE.args" && grep -q 'ponytail-review' "$FAKE.args" && grep -q 'extra check' "$FAKE.args" \
@@ -71,6 +76,13 @@ gate "$T" "git push";                          [ $? = 2 ] && ok "complex diff: s
 printf '#!/bin/sh\nexit 1\n' > "$FAKEPI"
 CODEX_BIN="$FAKE" PI_BIN="$FAKEPI" "$AGENT" review -C "$T" --base main >/dev/null 2>&1
 gate "$T" "git push";                          [ $? = 0 ] && ok "complex diff: second reviewer failure fails open" || bad "complex diff: second reviewer failure fails open"
+unstamp
+cat > "$FAKEPI" <<'EOF2'
+#!/bin/sh
+echo '{"type":"agent_end","messages":[{"role":"assistant","stopReason":"error","errorMessage":"overloaded","content":[{"type":"text","text":"- [P1] partial kimi text"}]}]}'
+EOF2
+CODEX_BIN="$FAKE" PI_BIN="$FAKEPI" "$AGENT" review -C "$T" --base main >/dev/null 2>&1
+gate "$T" "git push";                          [ $? = 0 ] && ok "complex diff: second reviewer API error (rc 0) fails open" || bad "complex diff: second reviewer API error (rc 0) fails open"
 git -C "$T" checkout -q main
 
 if [ "${1:-}" != "--offline" ]; then

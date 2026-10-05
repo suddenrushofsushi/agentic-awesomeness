@@ -222,8 +222,9 @@ def review(a, prompt):
         else:
             print(f"[agent] warning: second reviewer {COMPLEX_REVIEW_MODEL} failed (rc={k_meta.get('rc')}); "
                   f"stamping on {model} alone", file=sys.stderr)
-    # a finding's own tag only, at line start; "[P1]" quoted inside a P2's prose does not block
-    blocking = re.findall(r"^[ \t]*(?:[-*][ \t]*)?\[P[01]\][^\n]*", text, re.M)
+    # fail closed: any [P0]/[P1] blocks, whatever the finding format (bullet, numbered, bold, JSON).
+    # Only a tag quoted as inline code (`[P1]`) inside another finding's prose is exempt.
+    blocking = [l for l in text.splitlines() if re.search(r"(?<!`)\[P[01]\]|\[P[01]\](?!`)", l)]
     if rc == 0 and head:
         if git(a.cwd, "rev-parse", "HEAD") != head:
             meta["errors"] = ["HEAD moved during review; not stamped"]

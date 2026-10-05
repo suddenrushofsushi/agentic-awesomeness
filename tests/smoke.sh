@@ -56,6 +56,11 @@ unstamp
 printf '#!/bin/sh\necho "- [P2] fake finding\n  A partial \\`[P1]\\` would block here."\n' > "$FAKE"
 CODEX_BIN="$FAKE" "$AGENT" review -C "$T" --base main >/dev/null 2>&1
 gate "$T" "git push";                          [ $? = 0 ] && ok "[P1] quoted in a P2's prose stamps" || bad "[P1] quoted in a P2's prose stamps"
+for f in '1. [P1] numbered' '**[P1] bold**' '{"title": "[P0] json"}' '### [P1] heading'; do
+  unstamp; printf '#!/bin/sh\ncat <<"X"\n%s\nX\n' "$f" > "$FAKE"
+  CODEX_BIN="$FAKE" "$AGENT" review -C "$T" --base main >/dev/null 2>&1
+  gate "$T" "git push"; [ $? = 2 ] && ok "blocks format: $f" || bad "blocks format: $f"
+done
 printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "$0.args"\necho ok\n' > "$FAKE"
 CODEX_BIN="$FAKE" "$AGENT" review -C "$T" --base main "extra check" >/dev/null 2>&1
 ! grep -qx -- '--base' "$FAKE.args" && grep -q 'main...HEAD' "$FAKE.args" && grep -q 'ponytail-review' "$FAKE.args" && grep -q 'extra check' "$FAKE.args" \

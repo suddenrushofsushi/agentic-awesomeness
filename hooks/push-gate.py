@@ -19,18 +19,28 @@ def git(cwd, *args):
 
 
 SEPARATORS = set("&|;()")
+REDIRECT_CHARS = set("<>&|")
+FD_BEFORE_REDIRECT = re.compile(r"(?<![^\s;&|()])\d+(?=[<>])")  # the 2 in 2>&1, only when glued on
 WRAPPERS = {"env", "command", "builtin", "exec", "nice", "nohup", "sudo", "time", "timeout", "xargs", "caffeinate"}
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "fish"}
 ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 
 def segments(command):
-    """Split a shell line into simple commands, respecting quotes."""
-    lex = shlex.shlex(command.replace("\n", ";"), posix=True, punctuation_chars=True)
+    """Split a shell line into simple commands, respecting quotes.
+    Redirects (>, 2>&1, &>file, <<EOF) and their targets are dropped, so they never read as refspecs."""
+    command = FD_BEFORE_REDIRECT.sub("", command.replace("\n", ";"))
+    lex = shlex.shlex(command, posix=True, punctuation_chars=True)
     lex.whitespace_split = True
-    words = []
+    words, skip_target = [], False
     try:
         for tok in lex:
+            if skip_target:
+                skip_target = False
+                continue
+            if ("<" in tok or ">" in tok) and set(tok) <= REDIRECT_CHARS:
+                skip_target = True
+                continue
             if set(tok) <= SEPARATORS:
                 if words:
                     yield words

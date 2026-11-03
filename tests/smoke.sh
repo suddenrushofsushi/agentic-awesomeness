@@ -51,6 +51,8 @@ gate "$T" "git push origin other 2 >log";      [ $? = 2 ] && ok "spaced digit st
 for lit in "git push origin other '>' main" "git push origin other \\> main"; do
   gate "$T" "$lit"; [ $? = 2 ] && ok "quoted > stays a refspec: $lit" || bad "quoted > stays a refspec: $lit"
 done
+git -C "$T" branch 'rel;' other && git -C "$T" branch 'rel;2'  # only rel; is stamped
+gate "$T" "git push origin rel\\;2>/dev/null"; [ $? = 2 ] && ok "escaped ; keeps the digit in the ref" || bad "escaped ; keeps the digit in the ref"
 gate "$T" "git commit -m 'a > b' && git push origin other 2>&1"; [ $? = 0 ] && ok "quoted > elsewhere keeps redirects working" || bad "quoted > elsewhere keeps redirects working"
 "$AGENT" stamp -C "$T" --by someone --note x >/dev/null 2>&1; [ $? != 0 ] && ok "stamp refuses unknown --by" || bad "stamp refuses unknown --by"
 

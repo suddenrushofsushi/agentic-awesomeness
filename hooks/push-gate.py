@@ -20,7 +20,8 @@ def git(cwd, *args):
 
 SEPARATORS = set("&|;()")
 REDIRECT_CHARS = set("<>&|")
-FD_BEFORE_REDIRECT = re.compile(r"(?<![^\s;&|()])\d+(?=[<>])")  # the 2 in 2>&1, only when glued on
+# the 2 in 2>&1, only when glued on at a real word boundary (not after an escaped ; or space)
+FD_BEFORE_REDIRECT = re.compile(r"(?<![^\s;&|()])(?<!\\[\s;&|()])\d+(?=[<>])")
 MASK = str.maketrans("<>", "\ue000\ue001")  # stand-ins for a quoted or escaped < >, which is plain text
 UNMASK = str.maketrans("\ue000\ue001", "<>")
 WRAPPERS = {"env", "command", "builtin", "exec", "nice", "nohup", "sudo", "time", "timeout", "xargs", "caffeinate"}

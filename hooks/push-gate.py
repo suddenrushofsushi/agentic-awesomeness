@@ -21,15 +21,37 @@ def git(cwd, *args):
 SEPARATORS = set("&|;()")
 REDIRECT_CHARS = set("<>&|")
 FD_BEFORE_REDIRECT = re.compile(r"(?<![^\s;&|()])\d+(?=[<>])")  # the 2 in 2>&1, only when glued on
+MASK = str.maketrans("<>", "\ue000\ue001")  # stand-ins for a quoted or escaped < >, which is plain text
+UNMASK = str.maketrans("\ue000\ue001", "<>")
 WRAPPERS = {"env", "command", "builtin", "exec", "nice", "nohup", "sudo", "time", "timeout", "xargs", "caffeinate"}
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "fish"}
 ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 
+def mask_quoted(command):
+    """Swap < and > inside quotes or after a backslash for stand-ins, so only real redirects get dropped."""
+    out, quote, i = [], None, 0
+    while i < len(command):
+        c = command[i]
+        if c == "\\" and quote != "'" and i + 1 < len(command):
+            out.append(c + command[i + 1].translate(MASK))
+            i += 2
+            continue
+        if quote is None and c in "'\"":
+            quote = c
+        elif c == quote:
+            quote = None
+        elif quote:
+            c = c.translate(MASK)
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def segments(command):
     """Split a shell line into simple commands, respecting quotes.
     Redirects (>, 2>&1, &>file, <<EOF) and their targets are dropped, so they never read as refspecs."""
-    command = FD_BEFORE_REDIRECT.sub("", command.replace("\n", ";"))
+    command = FD_BEFORE_REDIRECT.sub("", mask_quoted(command.replace("\n", ";")))
     lex = shlex.shlex(command, posix=True, punctuation_chars=True)
     lex.whitespace_split = True
     words, skip_target = [], False
@@ -46,9 +68,9 @@ def segments(command):
                     yield words
                 words = []
             else:
-                words.append(tok)
+                words.append(tok.translate(UNMASK))
     except ValueError:  # unbalanced quotes: rough split, so a push still gets seen
-        yield from (seg.split() for seg in re.split(r"[&|;()\n]", command) if seg.strip())
+        yield from (seg.translate(UNMASK).split() for seg in re.split(r"[&|;()\n]", command) if seg.strip())
         return
     if words:
         yield words

@@ -48,6 +48,10 @@ for redir in "git push origin other 2>&1 | tail -3" "git push origin other >/dev
 done
 gate "$T" "git push origin main 2>&1 | tail -3"; [ $? = 2 ] && ok "redirect does not hide an unstamped ref" || bad "redirect does not hide an unstamped ref"
 gate "$T" "git push origin other 2 >log";      [ $? = 2 ] && ok "spaced digit stays a refspec"     || bad "spaced digit stays a refspec"
+for lit in "git push origin other '>' main" "git push origin other \\> main"; do
+  gate "$T" "$lit"; [ $? = 2 ] && ok "quoted > stays a refspec: $lit" || bad "quoted > stays a refspec: $lit"
+done
+gate "$T" "git commit -m 'a > b' && git push origin other 2>&1"; [ $? = 0 ] && ok "quoted > elsewhere keeps redirects working" || bad "quoted > elsewhere keeps redirects working"
 "$AGENT" stamp -C "$T" --by someone --note x >/dev/null 2>&1; [ $? != 0 ] && ok "stamp refuses unknown --by" || bad "stamp refuses unknown --by"
 
 # review stamping rule, with a fake codex that prints canned findings

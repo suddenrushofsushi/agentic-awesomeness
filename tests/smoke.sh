@@ -42,6 +42,18 @@ gate "$T" "git push origin other main";        [ $? = 2 ] && ok "gate checks eve
 gate "$T" "git push origin :old";              [ $? = 0 ] && ok "gate allows :dst delete"          || bad "gate allows :dst delete"
 gate "$T" "git push --all origin";             [ $? = 2 ] && ok "gate blocks --all"                || bad "gate blocks --all"
 gate "$T" "git push origin nosuchref";         [ $? = 2 ] && ok "gate blocks unresolvable ref"     || bad "gate blocks unresolvable ref"
+for redir in "git push origin other 2>&1 | tail -3" "git push origin other >/dev/null 2>&1" "git push &>log origin other" \
+             "git push origin other > main"; do
+  gate "$T" "$redir"; [ $? = 0 ] && ok "gate ignores redirect: $redir" || bad "gate ignores redirect: $redir"
+done
+gate "$T" "git push origin main 2>&1 | tail -3"; [ $? = 2 ] && ok "redirect does not hide an unstamped ref" || bad "redirect does not hide an unstamped ref"
+gate "$T" "git push origin other 2 >log";      [ $? = 2 ] && ok "spaced digit stays a refspec"     || bad "spaced digit stays a refspec"
+for lit in "git push origin other '>' main" "git push origin other \\> main"; do
+  gate "$T" "$lit"; [ $? = 2 ] && ok "quoted > stays a refspec: $lit" || bad "quoted > stays a refspec: $lit"
+done
+git -C "$T" branch 'rel;' other && git -C "$T" branch 'rel;2'  # only rel; is stamped
+gate "$T" "git push origin rel\\;2>/dev/null"; [ $? = 2 ] && ok "escaped ; keeps the digit in the ref" || bad "escaped ; keeps the digit in the ref"
+gate "$T" "git commit -m 'a > b' && git push origin other 2>&1"; [ $? = 0 ] && ok "quoted > elsewhere keeps redirects working" || bad "quoted > elsewhere keeps redirects working"
 "$AGENT" stamp -C "$T" --by someone --note x >/dev/null 2>&1; [ $? != 0 ] && ok "stamp refuses unknown --by" || bad "stamp refuses unknown --by"
 
 # review stamping rule, with a fake codex that prints canned findings

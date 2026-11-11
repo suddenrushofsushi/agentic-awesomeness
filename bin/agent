@@ -15,7 +15,6 @@ ponytail-review lens (over-engineering as [P3], which never blocks). Diffs of CO
 COMPLEX_FILES+ files also get COMPLEX_REVIEW_MODEL in parallel; its P0/P1 block too, its failure does not.
 """
 import argparse, datetime, json, os, re, subprocess, sys, threading, time, urllib.error, urllib.request
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 CODEX_PATHS = ("/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",  # ChatGPT app since 2026-09-30
@@ -152,47 +151,67 @@ def run_pi(a, prompt, timeout=None):
             failed = last.get("errorMessage") or last.get("stopReason") in ("error", "aborted")
             meta["errors"] = [last.get("errorMessage") or f"stopReason={last.get('stopReason')}"] if failed else []
     if meta["model"].startswith("openrouter/"):
-        openrouter_bill(run_dir, meta)
+        meta["pi_cost"], meta["cost_source"] = meta.get("cost"), "pi"
+        try:  # optional enrichment: a billing failure must never cost the run its answer
+            openrouter_bill(run_dir, meta)
+        except Exception as e:
+            meta["bill_error"] = repr(e)
     return run_dir, meta, answer
+
+
+def openrouter_key():
+    """The OpenRouter key pi uses: stored credential first (key, or OAuth access; `$VAR` and `!command` resolved
+    like pi does), then OPENROUTER_API_KEY."""
+    try:
+        v = json.loads((Path.home() / ".pi/agent/auth.json").read_text()).get("openrouter")
+    except (OSError, ValueError, AttributeError):
+        v = None
+    raw = (v.get("key") or v.get("access")) if isinstance(v, dict) else v
+    if isinstance(raw, str) and raw.startswith("!"):
+        raw = subprocess.run(raw[1:], shell=True, capture_output=True, text=True, timeout=10).stdout.strip()
+    elif isinstance(raw, str) and raw.startswith("$"):
+        raw = os.environ.get(raw.lstrip("$").strip("{}"))
+    return raw or os.environ.get("OPENROUTER_API_KEY")
 
 
 def openrouter_bill(run_dir, meta):
     """Replace pi's cost with OpenRouter's bill. pi prices from its own catalog, and a model missing from it gets
-    placeholder rates (2026-11-11: DeepSeek V4.1 Flash 1017 pi $2.69, billed $0.20). Falls back to pi's cost,
-    marked cost_source=pi, when any generation can't be looked up."""
+    placeholder rates (2026-11-11: DeepSeek V4.1 Flash 1017 pi $2.69, billed $0.20). Keeps pi's cost, marked
+    cost_source=pi, unless every generation is looked up within BILL_DEADLINE."""
     ids = sorted(set(re.findall(r'"responseId":"(gen-[^"]+)"', (run_dir / "events.jsonl").read_text())))
-    key = None
-    try:  # same precedence as pi: stored credential first, then the environment
-        v = json.loads((Path.home() / ".pi/agent/auth.json").read_text()).get("openrouter")
-        key = v.get("key") if isinstance(v, dict) else v
-    except (OSError, ValueError, AttributeError):
-        pass
-    key = key or os.environ.get("OPENROUTER_API_KEY")
-    meta["pi_cost"], meta["cost_source"] = meta.get("cost"), "pi"
+    key = openrouter_key()
     if not ids or not key:
         return
-    deadline = time.monotonic() + BILL_DEADLINE  # best effort: never hold up a review or a stamp for long
+    deadline = time.monotonic() + BILL_DEADLINE  # hard: never hold up a review or a stamp for long
+    got = [None] * len(ids)
+    slots = threading.Semaphore(12)
 
-    def gen(gid):  # a new generation can 404 for a few seconds
+    def gen(i, gid):  # a new generation can 404 for a few seconds
         req = urllib.request.Request(f"https://openrouter.ai/api/v1/generation?id={gid}",
                                      headers={"Authorization": f"Bearer {key}"})
-        for wait in (0, 2, 4, 8):
-            time.sleep(min(wait, max(0.0, deadline - time.monotonic())))
-            left = deadline - time.monotonic()
-            if left <= 0:
-                return None
-            try:
-                d = json.load(urllib.request.urlopen(req, timeout=min(10, left)))["data"]
-                return d["total_cost"], d["provider_name"]
-            except (urllib.error.URLError, OSError, ValueError, KeyError):
-                continue
-        return None
+        with slots:
+            for wait in (0, 2, 4, 8):
+                time.sleep(min(wait, max(0.0, deadline - time.monotonic())))
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    return
+                try:
+                    d = json.load(urllib.request.urlopen(req, timeout=min(10, left)))["data"]
+                    got[i] = (d["total_cost"], d["provider_name"])
+                    return
+                except Exception:  # HTTP errors, truncated reads, bad JSON: retry, then give up
+                    continue
 
-    with ThreadPoolExecutor(12) as ex:
-        got = list(ex.map(gen, ids))
-    if all(got):
-        meta["cost"], meta["cost_source"] = round(sum(c for c, _ in got), 4), "openrouter"
-        meta["providers"] = sorted({p for _, p in got})
+    # Daemon threads joined against the deadline: a stalled download can't block the run or interpreter exit.
+    workers = [threading.Thread(target=gen, args=(i, g), daemon=True) for i, g in enumerate(ids)]
+    for w in workers:
+        w.start()
+    for w in workers:
+        w.join(max(0.0, deadline - time.monotonic()))
+    done = list(got)
+    if all(done):
+        meta["cost"], meta["cost_source"] = round(sum(c for c, _ in done), 4), "openrouter"
+        meta["providers"] = sorted({p for _, p in done})
 
 
 def pi(a, prompt):

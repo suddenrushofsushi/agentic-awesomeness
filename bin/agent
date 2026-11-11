@@ -14,7 +14,8 @@ A review stamps HEAD only when it finishes with no [P0]/[P1] finding. Every revi
 ponytail-review lens (over-engineering as [P3], which never blocks). Diffs of COMPLEX_LOC+ lines or
 COMPLEX_FILES+ files also get COMPLEX_REVIEW_MODEL in parallel; its P0/P1 block too, its failure does not.
 """
-import argparse, datetime, json, os, re, subprocess, sys, threading, time
+import argparse, datetime, json, os, re, subprocess, sys, threading, time, urllib.error, urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 CODEX_PATHS = ("/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",  # ChatGPT app since 2026-09-30
@@ -82,6 +83,10 @@ def finish(run_dir, meta, answer):
         for e in meta.get("errors", []):
             print(f"[agent] error: {e}")
     extra = " ".join(f"{k}={meta[k]}" for k in ("session", "cost") if meta.get(k))
+    if meta.get("cost") and meta.get("cost_source") == "pi":
+        extra += " (pi catalog cost, not OpenRouter's bill)"
+    if meta.get("providers"):
+        extra += f" via={','.join(meta['providers'])}"
     print(f"[agent] {meta['agent']} {meta['model']} {meta['seconds']}s rc={meta['rc']} {extra} run={run_dir}",
           file=sys.stderr)
     return meta["rc"] or (0 if answer.strip() else 1)
@@ -145,7 +150,44 @@ def run_pi(a, prompt, timeout=None):
             # Assign, not append: only the last agent_end counts, so a retried-then-recovered run passes.
             failed = last.get("errorMessage") or last.get("stopReason") in ("error", "aborted")
             meta["errors"] = [last.get("errorMessage") or f"stopReason={last.get('stopReason')}"] if failed else []
+    if meta["model"].startswith("openrouter/"):
+        openrouter_bill(run_dir, meta)
     return run_dir, meta, answer
+
+
+def openrouter_bill(run_dir, meta):
+    """Replace pi's cost with OpenRouter's bill. pi prices from its own catalog, and a model missing from it gets
+    placeholder rates (2026-11-11: DeepSeek V4.1 Flash 1017 pi $2.69, billed $0.20). Falls back to pi's cost,
+    marked cost_source=pi, when any generation can't be looked up."""
+    ids = sorted(set(re.findall(r'"responseId":"(gen-[^"]+)"', (run_dir / "events.jsonl").read_text())))
+    key = os.environ.get("OPENROUTER_API_KEY")
+    if not key:
+        try:
+            v = json.loads((Path.home() / ".pi/agent/auth.json").read_text()).get("openrouter")
+            key = v.get("key") if isinstance(v, dict) else v
+        except (OSError, ValueError):
+            key = None
+    meta["pi_cost"], meta["cost_source"] = meta.get("cost"), "pi"
+    if not ids or not key:
+        return
+
+    def gen(gid):  # a new generation can 404 for a few seconds
+        req = urllib.request.Request(f"https://openrouter.ai/api/v1/generation?id={gid}",
+                                     headers={"Authorization": f"Bearer {key}"})
+        for wait in (0, 2, 4, 8, 12):
+            time.sleep(wait)
+            try:
+                d = json.load(urllib.request.urlopen(req, timeout=20))["data"]
+                return d["total_cost"], d["provider_name"]
+            except (urllib.error.URLError, OSError, ValueError, KeyError):
+                continue
+        return None
+
+    with ThreadPoolExecutor(12) as ex:
+        got = list(ex.map(gen, ids))
+    if all(got):
+        meta["cost"], meta["cost_source"] = round(sum(c for c, _ in got), 4), "openrouter"
+        meta["providers"] = sorted({p for _, p in got})
 
 
 def pi(a, prompt):

@@ -28,6 +28,7 @@ CODEX_MODEL, REVIEW_MODEL, REVIEW_EFFORT = "gpt-6.1-sol", "gpt-6.1-sol", "high"
 COMPLEX_REVIEW_MODEL, COMPLEX_LOC, COMPLEX_FILES, COMPLEX_TIMEOUT = "openrouter/moonshotai/kimi-k3", 800, 15, 900
 DIFF_ARG_BYTES = 600_000  # second reviewer's diff, inlined in pi's argv
 PI_READ_TOOLS = "read,grep,find,ls,evaluate"  # no mcp/mcpScript: they reach MCP tools that write
+BILL_DEADLINE = 30  # seconds for OpenRouter cost lookups after a pi run; past it, pi's cost stands (labelled)
 RULES = """You are a delegated worker. Claude Code owns this task and reviews your work.
 - Work only inside {cwd}.
 - {mode}
@@ -160,24 +161,28 @@ def openrouter_bill(run_dir, meta):
     placeholder rates (2026-11-11: DeepSeek V4.1 Flash 1017 pi $2.69, billed $0.20). Falls back to pi's cost,
     marked cost_source=pi, when any generation can't be looked up."""
     ids = sorted(set(re.findall(r'"responseId":"(gen-[^"]+)"', (run_dir / "events.jsonl").read_text())))
-    key = os.environ.get("OPENROUTER_API_KEY")
-    if not key:
-        try:
-            v = json.loads((Path.home() / ".pi/agent/auth.json").read_text()).get("openrouter")
-            key = v.get("key") if isinstance(v, dict) else v
-        except (OSError, ValueError):
-            key = None
+    key = None
+    try:  # same precedence as pi: stored credential first, then the environment
+        v = json.loads((Path.home() / ".pi/agent/auth.json").read_text()).get("openrouter")
+        key = v.get("key") if isinstance(v, dict) else v
+    except (OSError, ValueError, AttributeError):
+        pass
+    key = key or os.environ.get("OPENROUTER_API_KEY")
     meta["pi_cost"], meta["cost_source"] = meta.get("cost"), "pi"
     if not ids or not key:
         return
+    deadline = time.monotonic() + BILL_DEADLINE  # best effort: never hold up a review or a stamp for long
 
     def gen(gid):  # a new generation can 404 for a few seconds
         req = urllib.request.Request(f"https://openrouter.ai/api/v1/generation?id={gid}",
                                      headers={"Authorization": f"Bearer {key}"})
-        for wait in (0, 2, 4, 8, 12):
-            time.sleep(wait)
+        for wait in (0, 2, 4, 8):
+            time.sleep(min(wait, max(0.0, deadline - time.monotonic())))
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return None
             try:
-                d = json.load(urllib.request.urlopen(req, timeout=20))["data"]
+                d = json.load(urllib.request.urlopen(req, timeout=min(10, left)))["data"]
                 return d["total_cost"], d["provider_name"]
             except (urllib.error.URLError, OSError, ValueError, KeyError):
                 continue

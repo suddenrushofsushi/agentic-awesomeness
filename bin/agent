@@ -197,8 +197,14 @@ def openrouter_bill(run_dir, meta):
                     return
                 try:
                     d = json.load(urllib.request.urlopen(req, timeout=min(10, left)))["data"]
-                    got[i] = (d["total_cost"], d["provider_name"])
-                    return
+                    # BYOK (e.g. OpenAI on our own key): OpenRouter bills only its fee; the provider bills
+                    # upstream_inference_cost, which reads 0 until it lands
+                    up = d.get("upstream_inference_cost") if d.get("is_byok") else 0
+                    if d.get("is_byok") and not up and d.get("native_tokens_prompt"):
+                        continue
+                    if isinstance(d["total_cost"], (int, float)) and isinstance(up, (int, float)):
+                        got[i] = (d["total_cost"] + up, d["provider_name"])
+                        return
                 except Exception:  # HTTP errors, truncated reads, bad JSON: retry, then give up
                     continue
 

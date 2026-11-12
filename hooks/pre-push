@@ -1,0 +1,40 @@
+#!/bin/sh
+# git pre-push hook. Blocks a push that an agent harness runs (Claude Code, Codex, Pi, a T3 Code
+# thread, or T3 Code's own Push button) unless every pushed commit has a review stamp from
+# `agent review` or `agent stamp`. Same stamp as hooks/push-gate.py: <git-common-dir>/agent-review/<sha>.
+# A stamp covers the whole reviewed diff up to that commit, so only the tip of each pushed ref is checked.
+#
+# A push from a plain terminal (no harness marker in the environment) passes.
+# Bypass, only when Craig says so: AGENT_REVIEW_SKIP=1 git push ...
+# Limit: `git push --no-verify` skips every git hook. hooks/push-gate.py still covers Claude Code.
+
+[ "${AGENT_REVIEW_SKIP:-}" = "1" ] && exit 0
+
+# Markers checked on 2026-11-12: Claude Code (CLAUDECODE, AI_AGENT), Codex (CODEX_THREAD_ID,
+# CODEX_SESSION_ID), Pi (PI_CODING_AGENT, PI_SESSION_ID), T3 Code server and threads
+# (T3CODE_CLI_PATH, T3CODE_THREAD_ID).
+[ -n "${CLAUDECODE:-}${AI_AGENT:-}${CODEX_THREAD_ID:-}${CODEX_SESSION_ID:-}${PI_CODING_AGENT:-}${PI_SESSION_ID:-}${T3CODE_CLI_PATH:-}${T3CODE_THREAD_ID:-}" ] || exit 0
+
+common="$(git rev-parse --git-common-dir 2>/dev/null)" || {
+  echo "Push blocked: the review gate could not find the git directory." >&2
+  exit 1
+}
+missing=""
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$local_sha" in
+    *[!0]*) ;;
+    *) continue ;;  # all zeros: deletes a remote ref, ships no code
+  esac
+  commit="$(git rev-parse --verify --quiet "$local_sha^{commit}")" || commit=""
+  if [ -z "$commit" ]; then
+    missing="$missing $local_ref(unresolved)"
+  elif [ ! -e "$common/agent-review/$commit" ]; then
+    missing="$missing $(printf '%.10s' "$commit")"
+  fi
+done
+[ -z "$missing" ] && exit 0
+
+echo "Push blocked: no review stamp for$missing. Run the review gate (agent review) first." >&2
+echo "For code you reviewed yourself, or a targeted fix after the first push: agent stamp --by claude --note ..." >&2
+echo "Bypass only if Craig says so: AGENT_REVIEW_SKIP=1 git push ..." >&2
+exit 1

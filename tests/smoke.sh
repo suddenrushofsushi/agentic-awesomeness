@@ -111,7 +111,7 @@ gate "$T" "git push";                          [ $? = 2 ] && ok "complex diff: s
 unstamp
 cat > "$FAKEPI" <<EOF2
 #!/bin/sh
-# first call: empty answer (Morph quirk); second call: a P1
+# first call: empty answer (review left in reasoning); second call: a P1
 if [ -e "$T/.pi-called" ]; then
   echo '{"type":"agent_end","messages":[{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"- [P1] found on second try"}]}]}'
 else

@@ -290,7 +290,11 @@ def review(a, prompt):
                 (r[0] / "meta.json").write_text(json.dumps(r[1], indent=2))
                 first = r
                 r = run_pi(k, k_task, timeout=left)
-                r[1]["cost"] = round((r[1].get("cost") or 0) + (first[1].get("cost") or 0), 4) or None
+                for f in ("cost", "pi_cost"):
+                    if f in r[1] or f in first[1]:
+                        r[1][f] = round((r[1].get(f) or 0) + (first[1].get(f) or 0), 4) or None
+                if first[1].get("cost_source") != r[1].get("cost_source"):  # billed + estimate is not a bill
+                    r[1]["cost_source"] = "pi"
                 r[1]["retried_from"] = str(first[0])
             result.update(r=r)
 

@@ -25,6 +25,6 @@ Complex diffs (`COMPLEX_LOC`+ lines changed or `COMPLEX_FILES`+ files, naive cou
 4. **Loop.** If you changed code, run `agent review` again, because the stamp is tied to HEAD. Max 3 rounds. Stop early when a round has no finding you accept.
    - A round with an open P0 or P1 leaves HEAD unstamped. If Craig overrules it, stamp with his decision: `agent stamp -C <repo> --by craig --note "Craig overruled [P1] <finding>: <his reason>"`. Only after he says so in chat.
 5. **Report to Craig.** Fixed (one line each), disputed (finding and reason), P0/P1 held for his call, still open. Then wait.
-6. **Push on Craig's go only.** The gate passes when the final HEAD has a stamp. Craig's "go" runs the cpw skill from its push step: push, PR, CI watch, CodeRabbit loop. If Craig said "cpw" up front, that was the go: push as soon as HEAD is stamped.
+6. **Push on Craig's go only.** The gate passes when the final HEAD has a stamp. Craig's "go" runs the cpw skill from its push step: push, PR, then Auto-fix on the app's PR monitor. If Craig said "cpw" up front, that was the go: push as soon as HEAD is stamped.
 
 Bypass: `AGENT_REVIEW_SKIP=1 git push`, only when Craig says to skip review.

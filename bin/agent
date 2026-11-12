@@ -23,8 +23,10 @@ CODEX = os.environ.get("CODEX_BIN") or next((p for p in CODEX_PATHS if os.path.e
 RUNS = Path(os.environ.get("AGENT_RUNS", "~/.agent-runs")).expanduser()
 PI = os.environ.get("PI_BIN", "pi")
 CODEX_MODEL, REVIEW_MODEL, REVIEW_EFFORT = "gpt-6.1-sol", "gpt-6.1-sol", "high"
-# Large diffs also get Kimi K3 (best recall on the 2026-10-02 bakeoff). Fails open: Sol alone still stamps.
-COMPLEX_REVIEW_MODEL, COMPLEX_LOC, COMPLEX_FILES, COMPLEX_TIMEOUT = "openrouter/moonshotai/kimi-k3", 800, 15, 900
+# Large diffs also get DeepSeek V4.1 Flash 1017: Kimi K3's recall at ~1/26 the cost (2026-11-11 bakeoff, pinned to
+# Morph fp8 in ~/.pi/agent/models.json). Fails open: Sol alone still stamps.
+COMPLEX_REVIEW_MODEL = "openrouter/deepseek/deepseek-v4.1-flash-1017"
+COMPLEX_LOC, COMPLEX_FILES, COMPLEX_TIMEOUT, COMPLEX_RETRY_MIN = 800, 15, 900, 120
 DIFF_ARG_BYTES = 600_000  # second reviewer's diff, inlined in pi's argv
 PI_READ_TOOLS = "read,grep,find,ls,evaluate"  # no mcp/mcpScript: they reach MCP tools that write
 BILL_DEADLINE = 30  # seconds for OpenRouter cost lookups after a pi run; past it, pi's cost stands (labelled)
@@ -48,8 +50,15 @@ def git(cwd, *args):
 
 def new_run(agent, model, prompt):
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    d = RUNS / f"{stamp}-{os.getpid()}-{agent}-{(model or 'default').replace('/', '_')}"
-    d.mkdir(parents=True)
+    base = RUNS / f"{stamp}-{os.getpid()}-{agent}-{(model or 'default').replace('/', '_')}"
+    d, n = base, 1
+    while True:  # a retry inside the same second gets -2, -3, ...
+        try:
+            d.mkdir(parents=True)
+            break
+        except FileExistsError:
+            n += 1
+            d = base.with_name(f"{base.name}-{n}")
     (d / "prompt.md").write_text(prompt)
     return d
 
@@ -268,7 +277,19 @@ def review(a, prompt):
         diff = (git(a.cwd, 'diff', *rng) or '').encode()[:DIFF_ARG_BYTES].decode(errors="ignore")
         k_task = (f"{task}\n\nOutput only findings, one per line: `[P0-P3] path:line: problem. Fix: one line.` "
                   f"If none, write `No findings`.\n\nThe diff:\n```diff\n{diff}\n```")
-        second = threading.Thread(target=lambda: result.update(r=run_pi(k, k_task, timeout=COMPLEX_TIMEOUT)))
+        def second_review():
+            # Morph sometimes returns the whole review in the reasoning channel and an empty answer: retry once,
+            # inside the same COMPLEX_TIMEOUT budget
+            start = time.monotonic()
+            r = run_pi(k, k_task, timeout=COMPLEX_TIMEOUT)
+            left = COMPLEX_TIMEOUT - (time.monotonic() - start)
+            if r[1].get("rc") == 0 and not r[1].get("errors") and not r[2].strip() and left >= COMPLEX_RETRY_MIN:
+                print(f"[agent] second reviewer {COMPLEX_REVIEW_MODEL} returned an empty answer; retrying once",
+                      file=sys.stderr)
+                r = run_pi(k, k_task, timeout=left)
+            result.update(r=r)
+
+        second = threading.Thread(target=second_review)
         second.start()
     cmd = [CODEX, "review", "-c", f'model="{model}"', "-c", f'model_reasoning_effort="{effort}"', task]
     run_dir = new_run("review", model, task)

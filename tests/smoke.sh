@@ -108,6 +108,20 @@ echo '{"type":"agent_end","messages":[{"role":"assistant","stopReason":"stop","c
 EOF2
 CODEX_BIN="$FAKE" PI_BIN="$FAKEPI" "$AGENT" review -C "$T" --base main >/dev/null 2>&1
 gate "$T" "git push";                          [ $? = 2 ] && ok "complex diff: second reviewer recovered after retry still blocks" || bad "complex diff: second reviewer recovered after retry still blocks"
+unstamp
+cat > "$FAKEPI" <<EOF2
+#!/bin/sh
+# first call: empty answer (Morph quirk); second call: a P1
+if [ -e "$T/.pi-called" ]; then
+  echo '{"type":"agent_end","messages":[{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"- [P1] found on second try"}]}]}'
+else
+  touch "$T/.pi-called"
+  echo '{"type":"agent_end","messages":[{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":""}]}]}'
+fi
+EOF2
+CODEX_BIN="$FAKE" PI_BIN="$FAKEPI" "$AGENT" review -C "$T" --base main >/dev/null 2>&1
+gate "$T" "git push";                          [ $? = 2 ] && ok "complex diff: empty second answer is retried once" || bad "complex diff: empty second answer is retried once"
+rm -f "$T/.pi-called"
 git -C "$T" checkout -q main
 
 if [ "${1:-}" != "--offline" ]; then

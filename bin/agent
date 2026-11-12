@@ -286,7 +286,12 @@ def review(a, prompt):
             if r[1].get("rc") == 0 and not r[1].get("errors") and not r[2].strip() and left >= COMPLEX_RETRY_MIN:
                 print(f"[agent] second reviewer {COMPLEX_REVIEW_MODEL} returned an empty answer; retrying once",
                       file=sys.stderr)
+                (r[0] / "answer.md").write_text(r[2])  # keep the empty attempt's record: it was billed too
+                (r[0] / "meta.json").write_text(json.dumps(r[1], indent=2))
+                first = r
                 r = run_pi(k, k_task, timeout=left)
+                r[1]["cost"] = round((r[1].get("cost") or 0) + (first[1].get("cost") or 0), 4) or None
+                r[1]["retried_from"] = str(first[0])
             result.update(r=r)
 
         second = threading.Thread(target=second_review)

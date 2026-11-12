@@ -85,7 +85,7 @@ git -C "$T" add -- 'f*.py' &&git -C "$T" commit -q -m big
 FAKEPI="$T/fake-pi"; printf '#!/bin/sh\necho "- [P2] fake minor finding"\n' > "$FAKE"
 cat > "$FAKEPI" <<'EOF'
 #!/bin/sh
-echo '{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"text","text":"- [P1] fake kimi finding"}]}]}'
+echo '{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"text","text":"- [P1] fake second-reviewer finding"}]}]}'
 EOF
 chmod +x "$FAKEPI"
 CODEX_BIN="$FAKE" PI_BIN="$FAKEPI" "$AGENT" review -C "$T" --base main >/dev/null 2>&1
@@ -96,7 +96,7 @@ gate "$T" "git push";                          [ $? = 0 ] && ok "complex diff: s
 unstamp
 cat > "$FAKEPI" <<'EOF2'
 #!/bin/sh
-echo '{"type":"agent_end","messages":[{"role":"assistant","stopReason":"error","errorMessage":"overloaded","content":[{"type":"text","text":"- [P1] partial kimi text"}]}]}'
+echo '{"type":"agent_end","messages":[{"role":"assistant","stopReason":"error","errorMessage":"overloaded","content":[{"type":"text","text":"- [P1] partial second-reviewer text"}]}]}'
 EOF2
 CODEX_BIN="$FAKE" PI_BIN="$FAKEPI" "$AGENT" review -C "$T" --base main >/dev/null 2>&1
 gate "$T" "git push";                          [ $? = 0 ] && ok "complex diff: second reviewer API error (rc 0) fails open" || bad "complex diff: second reviewer API error (rc 0) fails open"
@@ -104,7 +104,7 @@ unstamp
 cat > "$FAKEPI" <<'EOF2'
 #!/bin/sh
 echo '{"type":"agent_end","messages":[{"role":"assistant","stopReason":"error","errorMessage":"overloaded","content":[]}]}'
-echo '{"type":"agent_end","messages":[{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"- [P1] kimi after retry"}]}]}'
+echo '{"type":"agent_end","messages":[{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"- [P1] second reviewer after retry"}]}]}'
 EOF2
 CODEX_BIN="$FAKE" PI_BIN="$FAKEPI" "$AGENT" review -C "$T" --base main >/dev/null 2>&1
 gate "$T" "git push";                          [ $? = 2 ] && ok "complex diff: second reviewer recovered after retry still blocks" || bad "complex diff: second reviewer recovered after retry still blocks"
